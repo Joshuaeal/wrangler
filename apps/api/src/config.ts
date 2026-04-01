@@ -16,6 +16,7 @@ export const config = {
   uiOrigin: required("UI_ORIGIN", "http://localhost:5173"),
   databasePath: required("DATABASE_PATH", "/data/db/wrangler.db"),
   hostHelperUrl: required("HOST_HELPER_URL", "http://host.docker.internal:4100"),
+  hostHelperControlToken: process.env.HOST_HELPER_CONTROL_TOKEN ?? "wrangler-local-control",
   sourceRoot: path.resolve(required("SOURCE_ROOT", "/Volumes")),
   projectsRoot: path.resolve(required("PROJECTS_ROOT", "/storage/projects")),
   destARoot: path.resolve(required("DEST_A_ROOT", "/storage/destination-a")),

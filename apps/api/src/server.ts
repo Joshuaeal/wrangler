@@ -434,6 +434,26 @@ app.post("/jobs/:id/cancel", (request, response, next) => {
   }
 });
 
+app.post("/system/shutdown", async (_request, response, next) => {
+  try {
+    const shutdownResponse = await fetch(`${config.hostHelperUrl}/shutdown`, {
+      method: "POST",
+      headers: {
+        "x-wrangler-control-token": config.hostHelperControlToken
+      }
+    });
+
+    if (!shutdownResponse.ok) {
+      const body = await shutdownResponse.json().catch(() => ({}));
+      throw new Error(body.error ?? "Unable to shut down Wrangler.");
+    }
+
+    response.status(202).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/jobs", async (request, response, next) => {
   try {
     if (!hasSavedDestinationSettings()) {

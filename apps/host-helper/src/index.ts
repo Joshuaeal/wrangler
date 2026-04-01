@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import process from "node:process";
 import type { Volume } from "@wrangler/shared";
 
 dotenv.config();
@@ -12,6 +13,8 @@ const execFileAsync = promisify(execFile);
 const app = express();
 const port = Number(process.env.HOST_HELPER_PORT ?? 4100);
 const sourceRoot = path.resolve(process.env.SOURCE_ROOT ?? "/Volumes");
+const projectRoot = path.resolve(process.env.WRANGLER_PROJECT_ROOT ?? process.cwd());
+const controlToken = process.env.HOST_HELPER_CONTROL_TOKEN ?? "wrangler-local-control";
 
 const seenVolumes = new Map<string, Volume>();
 type DiskInfo = {
@@ -31,6 +34,23 @@ app.get("/volumes", async (_request, response, next) => {
   try {
     const volumes = await scanVolumes();
     response.json(volumes);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/shutdown", async (request, response, next) => {
+  try {
+    if (request.header("x-wrangler-control-token") !== controlToken) {
+      response.status(403).json({ error: "Forbidden." });
+      return;
+    }
+
+    response.status(202).json({ ok: true });
+
+    setTimeout(() => {
+      void shutdownWrangler();
+    }, 100);
   } catch (error) {
     next(error);
   }
@@ -130,4 +150,12 @@ function matchBoolean(plist: string, key: string): boolean | null {
   }
 
   return null;
+}
+
+async function shutdownWrangler(): Promise<void> {
+  try {
+    await execFileAsync("docker", ["compose", "down"], { cwd: projectRoot });
+  } finally {
+    process.exit(0);
+  }
 }

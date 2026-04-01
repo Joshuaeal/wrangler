@@ -90,7 +90,38 @@ Wrangler is built as a set of small services:
 
 ---
 
-## **Dependencies**
+## **Quick Start**
+
+```bash
+git clone https://github.com/Joshuaeal/wrangler
+cd wrangler
+cp .env.example .env
+npm install
+```
+
+### Start system
+
+macOS and Windows:
+
+```bash
+npm run launch
+```
+
+This starts the correct host helper for your platform and brings the Docker stack up in the background, so you can close the terminal afterwards. Shut Wrangler down later from the Settings panel in the web UI.
+
+---
+
+### Open UI
+
+```
+http://<your-machine-ip>:5173
+```
+
+For external access through a reverse proxy or Cloudflare Tunnel, point the public hostname at the web service only. The web container proxies `/api/*` to the API internally, so the app works behind a single public origin without exposing port `4001`.
+
+---
+
+## **Requirements**
 
 * Node.js 20+
 * npm 10+

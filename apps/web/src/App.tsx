@@ -50,6 +50,7 @@ type RenameDialogState =
 
 type ConfirmDialogState =
   | { kind: "clearProjects"; title: string; message: string; confirmLabel: string }
+  | { kind: "shutdown"; title: string; message: string; confirmLabel: string }
   | null;
 
 type MacDirectoryEntry = {
@@ -785,6 +786,15 @@ export function App() {
     }
   }
 
+  async function shutdownWrangler() {
+    try {
+      await requestJson<void>("/system/shutdown", { method: "POST" });
+      setShowSettings(false);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to shut down Wrangler.");
+    }
+  }
+
   async function persistDestinations(nextDestinations: Destinations) {
     try {
       setDraftDestinations(nextDestinations);
@@ -1172,6 +1182,11 @@ export function App() {
 
     if (dialog.kind === "clearProjects") {
       await clearProjects();
+      return;
+    }
+
+    if (dialog.kind === "shutdown") {
+      await shutdownWrangler();
       return;
     }
 
@@ -2218,6 +2233,33 @@ export function App() {
                   </button>
                 </div>
               </div>
+              <div className="destinationRow">
+                <div className="sectionTitleRow">
+                  <strong>Shut Down Wrangler</strong>
+                  <span
+                    className="infoHint"
+                    data-tooltip="When Wrangler is started with the single launch command it keeps running after the terminal closes. Use this to stop the host helper and Docker stack cleanly from the UI."
+                  >
+                    ?
+                  </span>
+                </div>
+                <div className="pickerActions">
+                  <button
+                    type="button"
+                    className="dangerButton"
+                    onClick={() =>
+                      setConfirmDialog({
+                        kind: "shutdown",
+                        title: "Shut Down Wrangler",
+                        message: "Stop the background host helper and bring the Docker stack down for this instance?",
+                        confirmLabel: "Shut Down Wrangler"
+                      })
+                    }
+                  >
+                    Shut Down Wrangler
+                  </button>
+                </div>
+              </div>
               <div className="pickerActions">
                 <button type="button" className="dangerButton" onClick={() => void logout()}>
                   Log Out
@@ -2454,6 +2496,16 @@ export function App() {
               <p className="muted">
                 This machine needs its own destination folders before Wrangler can create projects or write files.
               </p>
+              <div className="sectionTitleRow">
+                <strong>Startup</strong>
+                <span
+                  className="infoHint"
+                  data-tooltip="Use npm run launch from the project root to start the host helper and Docker stack together in the background. After that you can close the terminal and shut Wrangler down later from Settings on macOS or Windows."
+                >
+                  ?
+                </span>
+              </div>
+              <code>npm run launch</code>
               <div className="setupSteps">
                 <div className="destinationRow">
                   <strong>Instance Name</strong>
