@@ -36,6 +36,7 @@ export async function runJob(jobId: string): Promise<void> {
   const totalSelections = selectedSources.reduce((sum, source) => sum + source.entries.length, 0);
   const sourcePlan = await buildSourceTransferPlan(selectedSources);
   const sourceBytesTotal = [...sourcePlan.values()].reduce((sum, item) => sum + item.bytes, 0);
+  const sourceOffsets = buildSourceOffsets(selectedSources, sourcePlan);
 
   clearCopyRecords(jobId);
 
@@ -47,7 +48,7 @@ export async function runJob(jobId: string): Promise<void> {
 
   updateJobStatus(jobId, "copyingToProject", { summary: "Copying source files into the project folder" });
   for (const source of selectedSources) {
-    await syncSelectedPaths(jobId, source, projectRoot, "project", sourcePlan, sourceBytesTotal);
+    await syncSelectedPaths(jobId, source, projectRoot, "project", sourcePlan, sourceOffsets, sourceBytesTotal);
   }
 
   updateJobStatus(jobId, "hashingProject", { summary: "Generating checksums for the project copy" });
@@ -82,10 +83,10 @@ export async function syncSelectedPaths(
   destinationRoot: string,
   destinationKind: DestinationKind,
   sourcePlan: Map<string, { bytes: number; files: number }>,
+  sourceOffsets: Map<string, number>,
   sourceBytesTotal: number
 ): Promise<void> {
   let copiedCount = 0;
-  let copiedBytes = 0;
 
   for (const entry of source.entries) {
     if (shouldIgnoreEntry(path.basename(entry.sourcePath))) {
@@ -98,13 +99,18 @@ export async function syncSelectedPaths(
     try {
       const planKey = `${source.volumeId}:${entry.sourcePath}`;
       const planned = sourcePlan.get(planKey) ?? { bytes: 0, files: 0 };
+      const copiedBeforeItem = sourceOffsets.get(planKey) ?? 0;
       updateJobStatus(jobId, "copyingToProject", {
-        summary: `Copying to project: ${formatTransferSize(copiedBytes)} / ${formatTransferSize(sourceBytesTotal)} | ${entry.sourcePath}`
+        summary: `Copying to project: ${formatTransferSize(copiedBeforeItem)} / ${formatTransferSize(sourceBytesTotal)} | ${entry.sourcePath}`
       });
-      await syncSingleSelection(source.sourceRoot ?? "", targetRoot, entry.sourcePath);
-      copiedBytes += planned.bytes;
+      await syncSingleSelection(source.sourceRoot ?? "", targetRoot, entry.sourcePath, (selectionBytes) => {
+        const totalCopiedBytes = copiedBeforeItem + Math.min(selectionBytes, planned.bytes);
+        updateJobStatus(jobId, "copyingToProject", {
+          summary: `Copying to project: ${formatTransferSize(totalCopiedBytes)} / ${formatTransferSize(sourceBytesTotal)} | ${entry.sourcePath}`
+        });
+      });
       updateJobStatus(jobId, "copyingToProject", {
-        summary: `Copying to project: ${formatTransferSize(copiedBytes)} / ${formatTransferSize(sourceBytesTotal)} | ${entry.sourcePath}`
+        summary: `Copying to project: ${formatTransferSize(copiedBeforeItem + planned.bytes)} / ${formatTransferSize(sourceBytesTotal)} | ${entry.sourcePath}`
       });
     } catch (error) {
       if (isIgnorableFsError(error)) {
@@ -231,7 +237,12 @@ async function collectFileStats(root: string): Promise<Array<{ path: string; siz
   return files;
 }
 
-async function syncSingleSelection(sourceRoot: string, destinationRoot: string, selectedPath: string): Promise<void> {
+async function syncSingleSelection(
+  sourceRoot: string,
+  destinationRoot: string,
+  selectedPath: string,
+  onProgress?: (bytes: number) => void
+): Promise<void> {
   const absoluteSourcePath = path.join(sourceRoot, selectedPath);
   const fileName = path.basename(selectedPath);
   const stats = await fsp.stat(absoluteSourcePath);
@@ -239,11 +250,11 @@ async function syncSingleSelection(sourceRoot: string, destinationRoot: string, 
   if (stats.isDirectory()) {
     const destinationPath = path.join(destinationRoot, fileName);
     await fsp.mkdir(destinationPath, { recursive: true });
-    await runRsync(["-a", appendSlash(absoluteSourcePath), appendSlash(destinationPath)]);
+    await runRsync(["-a", "--info=progress2", appendSlash(absoluteSourcePath), appendSlash(destinationPath)], onProgress);
     return;
   }
 
-  await runRsync(["-a", absoluteSourcePath, appendSlash(destinationRoot)]);
+  await runRsync(["-a", "--info=progress2", absoluteSourcePath, appendSlash(destinationRoot)], onProgress);
 }
 
 async function sha256File(filePath: string): Promise<string> {
@@ -346,6 +357,24 @@ async function buildSourceTransferPlan(sources: SourceSelection[]): Promise<Map<
   }
 
   return plan;
+}
+
+function buildSourceOffsets(
+  sources: SourceSelection[],
+  sourcePlan: Map<string, { bytes: number; files: number }>
+): Map<string, number> {
+  const offsets = new Map<string, number>();
+  let currentOffset = 0;
+
+  for (const source of sources) {
+    for (const entry of source.entries) {
+      const key = `${source.volumeId}:${entry.sourcePath}`;
+      offsets.set(key, currentOffset);
+      currentOffset += sourcePlan.get(key)?.bytes ?? 0;
+    }
+  }
+
+  return offsets;
 }
 
 function formatTransferSize(bytes: number): string {

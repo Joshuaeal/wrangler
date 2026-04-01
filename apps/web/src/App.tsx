@@ -73,20 +73,53 @@ type SourcePreview = {
   previewable: boolean;
 };
 
-function jobProgressPercent(status: Job["status"]): number {
+function parseSummaryProgress(summary: string | null): number | null {
+  if (!summary) {
+    return null;
+  }
+
+  const match = summary.match(/:\s+([\d.]+)\s+([KMGTP]?B)\s+\/\s+([\d.]+)\s+([KMGTP]?B)/i);
+  if (!match) {
+    return null;
+  }
+
+  const current = parseSizeToBytes(Number(match[1]), match[2]);
+  const total = parseSizeToBytes(Number(match[3]), match[4]);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
+    return null;
+  }
+
+  return Math.max(0, Math.min(1, current / total));
+}
+
+function parseSizeToBytes(value: number, unit: string): number {
+  const normalizedUnit = unit.toUpperCase();
+  const multipliers: Record<string, number> = {
+    B: 1,
+    KB: 1024,
+    MB: 1024 ** 2,
+    GB: 1024 ** 3,
+    TB: 1024 ** 4,
+    PB: 1024 ** 5
+  };
+  return value * (multipliers[normalizedUnit] ?? 1);
+}
+
+function jobProgressPercent(status: Job["status"], summary: string | null): number {
+  const stageProgress = parseSummaryProgress(summary);
   switch (status) {
     case "queued":
       return 0;
     case "scanning":
       return 8;
     case "copyingToProject":
-      return 35;
+      return 8 + Math.round((stageProgress ?? 0) * 27);
     case "hashingProject":
-      return 50;
+      return 35 + Math.round((stageProgress ?? 0) * 15);
     case "copyingToDestinations":
-      return 65;
+      return 50 + Math.round((stageProgress ?? 0) * 25);
     case "verifyingDestinations":
-      return 75;
+      return 75 + Math.round((stageProgress ?? 0) * 24);
     case "completed":
       return 100;
     case "failed":
@@ -1249,10 +1282,10 @@ export function App() {
                         <div className="jobProgressTrack" aria-hidden="true">
                           <div
                             className="jobProgressFill"
-                            style={{ width: `${jobProgressPercent(job.status)}%` }}
+                            style={{ width: `${jobProgressPercent(job.status, job.summary)}%` }}
                           />
                         </div>
-                        <small>{jobProgressPercent(job.status)}%</small>
+                        <small>{jobProgressPercent(job.status, job.summary)}%</small>
                       </div>
                     </div>
                   </button>
