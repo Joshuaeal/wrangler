@@ -2,6 +2,10 @@ FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
+ARG VITE_APP_GIT_SHA=""
+ARG VITE_GITHUB_REPO=""
+ARG VITE_GITHUB_BRANCH="main"
+
 COPY package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/tsconfig.json ./packages/shared/
 COPY apps/web/package.json apps/web/tsconfig.json apps/web/vite.config.ts ./apps/web/

@@ -4,6 +4,9 @@ import wranglerLogo from "./assets/wrangler-logo-alpha.png";
 import raconteurLogo from "./assets/raconteur-logo-alpha.png";
 
 const apiBase = import.meta.env.VITE_API_BASE_URL ?? "/api";
+const appGitSha = import.meta.env.VITE_APP_GIT_SHA ?? "";
+const githubRepo = import.meta.env.VITE_GITHUB_REPO ?? "";
+const githubBranch = import.meta.env.VITE_GITHUB_BRANCH ?? "main";
 
 type JobDetails = {
   job: Job;
@@ -131,6 +134,10 @@ type SourceMetadata = {
   take: string | null;
   raw: Record<string, string | number | null>;
 };
+
+type UpdateStatus =
+  | { state: "idle" | "checking" | "upToDate" | "error" }
+  | { state: "available"; latestSha: string };
 
 function parseSummaryProgress(summary: string | null): number | null {
   if (!summary) {
@@ -302,6 +309,7 @@ export function App() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [showSettings, setShowSettings] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>({ advancedMetadataEnabled: false, instanceName: "" });
+  const [instanceNameDraft, setInstanceNameDraft] = useState("");
   const [ingestMode, setIngestMode] = useState<IngestMode>("manual");
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -320,6 +328,8 @@ export function App() {
   const [showDestinationPicker, setShowDestinationPicker] = useState(false);
   const [destinationPickerField, setDestinationPickerField] = useState<DestinationPathField | null>(null);
   const [macDirectoryPath, setMacDirectoryPath] = useState(".");
+  const [macDirectoryHistory, setMacDirectoryHistory] = useState<string[]>(["."]);
+  const [macDirectoryHistoryIndex, setMacDirectoryHistoryIndex] = useState(0);
   const [macDirectories, setMacDirectories] = useState<MacDirectoryEntry[]>([]);
   const [destinationPresets, setDestinationPresets] = useState<DestinationPreset[]>([]);
   const [managedRoot, setManagedRoot] = useState<BrowserRoot>("project");
@@ -332,6 +342,7 @@ export function App() {
   const [renameValue, setRenameValue] = useState("");
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [resetPassword, setResetPassword] = useState("");
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ state: "idle" });
   const [error, setError] = useState<string | null>(null);
   const [showJobsPopup, setShowJobsPopup] = useState(false);
   const [showLogsPopup, setShowLogsPopup] = useState(false);
@@ -364,6 +375,45 @@ export function App() {
       ? `Wrangler | ${appSettings.instanceName.trim()}`
       : "Wrangler";
   }, [appSettings.instanceName]);
+
+  useEffect(() => {
+    setInstanceNameDraft(appSettings.instanceName);
+  }, [appSettings.instanceName]);
+
+  useEffect(() => {
+    if (!showSettings || !githubRepo || !appGitSha) {
+      return;
+    }
+
+    let cancelled = false;
+    setUpdateStatus({ state: "checking" });
+
+    void fetch(`https://api.github.com/repos/${githubRepo}/commits/${githubBranch}`)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error("Unable to check for updates.");
+        }
+        const payload = await response.json() as { sha?: string };
+        if (cancelled || !payload.sha) {
+          return;
+        }
+
+        setUpdateStatus(
+          payload.sha.startsWith(appGitSha) || appGitSha.startsWith(payload.sha)
+            ? { state: "upToDate" }
+            : { state: "available", latestSha: payload.sha.slice(0, 7) }
+        );
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUpdateStatus({ state: "error" });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showSettings]);
 
   useEffect(() => {
     if (!sourcePreview || sourcePreview.kind !== "file") {
@@ -712,6 +762,19 @@ export function App() {
     }
   }
 
+  async function saveSetupInstanceName() {
+    try {
+      const saved = await requestJson<AppSettings>("/settings", {
+        method: "PUT",
+        body: JSON.stringify({ instanceName: setupInstanceName })
+      });
+      setAppSettings(saved);
+      setSetupInstanceName(saved.instanceName);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to save instance name.");
+    }
+  }
+
   async function clearProjects() {
     try {
       await requestJson<void>("/projects", { method: "DELETE" });
@@ -866,7 +929,39 @@ export function App() {
         ? currentPath
         : ".";
     setMacDirectoryPath(nextPath);
+    setMacDirectoryHistory([nextPath]);
+    setMacDirectoryHistoryIndex(0);
     setShowDestinationPicker(true);
+  }
+
+  function navigateDestinationPicker(nextPath: string) {
+    setMacDirectoryPath(nextPath);
+    setMacDirectoryHistory((current) => {
+      const nextHistory = current.slice(0, macDirectoryHistoryIndex + 1);
+      if (nextHistory[nextHistory.length - 1] !== nextPath) {
+        nextHistory.push(nextPath);
+      }
+      setMacDirectoryHistoryIndex(nextHistory.length - 1);
+      return nextHistory;
+    });
+  }
+
+  function goDestinationBack() {
+    if (macDirectoryHistoryIndex <= 0) {
+      return;
+    }
+    const nextIndex = macDirectoryHistoryIndex - 1;
+    setMacDirectoryHistoryIndex(nextIndex);
+    setMacDirectoryPath(macDirectoryHistory[nextIndex] ?? ".");
+  }
+
+  function goDestinationForward() {
+    if (macDirectoryHistoryIndex >= macDirectoryHistory.length - 1) {
+      return;
+    }
+    const nextIndex = macDirectoryHistoryIndex + 1;
+    setMacDirectoryHistoryIndex(nextIndex);
+    setMacDirectoryPath(macDirectoryHistory[nextIndex] ?? ".");
   }
 
   function applyPickedDestination(selectedPath: string) {
@@ -2179,11 +2274,19 @@ export function App() {
               <div className="destinationRow">
                 <strong>Instance Name</strong>
                 <input
-                  value={appSettings.instanceName}
-                  onChange={(event) => setAppSettings((current) => ({ ...current, instanceName: event.target.value }))}
-                  onBlur={() => void persistAppSettings({ instanceName: appSettings.instanceName })}
+                  value={instanceNameDraft}
+                  onChange={(event) => setInstanceNameDraft(event.target.value)}
                   placeholder="Edit suite, cart, machine name..."
                 />
+                <div className="pickerActions">
+                  <button
+                    type="button"
+                    onClick={() => void persistAppSettings({ instanceName: instanceNameDraft })}
+                    disabled={instanceNameDraft.trim() === appSettings.instanceName.trim()}
+                  >
+                    Save Name
+                  </button>
+                </div>
               </div>
               <div className="destinationRow">
                 <strong>Metadata Parsing</strong>
@@ -2210,6 +2313,13 @@ export function App() {
                   </button>
                 </div>
               </div>
+              {updateStatus.state === "available" ? (
+                <div className="destinationRow">
+                  <strong>Update Available</strong>
+                  <span>A newer Wrangler build is on GitHub ({updateStatus.latestSha}).</span>
+                  <small className="muted">Run `git pull` from your Wrangler directory, then launch again.</small>
+                </div>
+              ) : null}
               <div className="destinationRow">
                 <strong>Reset To Defaults</strong>
                 <div className="authField">
@@ -2445,11 +2555,17 @@ export function App() {
                 <strong>Current Path</strong>
                 <code>{macDirectoryPath}</code>
                 <div className="pickerActions">
-                  <button onClick={() => setMacDirectoryPath("/Users")}>Users</button>
-                  <button onClick={() => setMacDirectoryPath("/Volumes")}>Volumes</button>
+                  <button
+                    onClick={() => navigateDestinationPicker(
+                      macDirectoryHistory[macDirectoryHistoryIndex + 1] ?? macDirectoryPath
+                    )}
+                    disabled={macDirectoryHistoryIndex >= macDirectoryHistory.length - 1}
+                  >
+                    Forward
+                  </button>
                   <button
                     onClick={() =>
-                      setMacDirectoryPath(
+                      navigateDestinationPicker(
                         macDirectoryPath === "/Users" || macDirectoryPath === "/Volumes"
                           ? macDirectoryPath
                           : macDirectoryPath.split("/").slice(0, -1).join("/") || "/Users"
@@ -2457,15 +2573,14 @@ export function App() {
                     }
                     disabled={macDirectoryPath === "/Users" || macDirectoryPath === "/Volumes"}
                   >
-                    Up
+                    Back
                   </button>
-                  <button onClick={() => applyPickedDestination(macDirectoryPath)}>Use This Folder</button>
                 </div>
               </div>
               {destinationPresets.length > 0 ? (
                 <div className="destinationPresetRow">
                   {destinationPresets.map((preset) => (
-                    <button key={preset.path} type="button" className="destinationPresetButton" onClick={() => setMacDirectoryPath(preset.path)}>
+                    <button key={preset.path} type="button" className="destinationPresetButton" onClick={() => navigateDestinationPicker(preset.path)}>
                       {preset.label}
                     </button>
                   ))}
@@ -2474,13 +2589,16 @@ export function App() {
               <ul className="fileList">
                 {macDirectories.map((directory) => (
                   <li key={directory.path}>
-                    <button className="jobButton" onClick={() => setMacDirectoryPath(directory.path)}>
+                    <button className="jobButton" onClick={() => navigateDestinationPicker(directory.path)}>
                       <span>{directory.name}</span>
                       <small>{directory.path}</small>
                     </button>
                   </li>
                 ))}
               </ul>
+              <div className="pickerActions">
+                <button onClick={() => applyPickedDestination(macDirectoryPath)}>Use This Folder</button>
+              </div>
             </div>
           </div>
         </aside>
@@ -2514,6 +2632,15 @@ export function App() {
                     onChange={(event) => setSetupInstanceName(event.target.value)}
                     placeholder="DIT Cart A, Studio B, Ingest 01..."
                   />
+                  <div className="pickerActions">
+                    <button
+                      type="button"
+                      onClick={() => void saveSetupInstanceName()}
+                      disabled={setupInstanceName.trim() === appSettings.instanceName.trim()}
+                    >
+                      Save Name
+                    </button>
+                  </div>
                   <small className="muted">Used in the browser tab title so multiple Wrangler windows are easy to tell apart.</small>
                 </div>
                 <div className="destinationRow">

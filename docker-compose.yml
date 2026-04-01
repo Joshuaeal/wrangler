@@ -38,6 +38,10 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        VITE_APP_GIT_SHA: ${VITE_APP_GIT_SHA:-}
+        VITE_GITHUB_REPO: ${VITE_GITHUB_REPO:-}
+        VITE_GITHUB_BRANCH: ${VITE_GITHUB_BRANCH:-main}
     depends_on:
       - api
     ports:
