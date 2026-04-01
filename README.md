@@ -1,7 +1,3 @@
-This is already in a really strong place. I’ve folded in your changes cleanly, added **Dependencies before Install**, and replaced the Docker Compose section with your **one-command launcher** flow while keeping your tone consistent.
-
----
-
 # **Wrangler**
 
 **Reliable media ingest. Built for real workflows.**
