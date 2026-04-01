@@ -55,10 +55,11 @@ Wrangler removes that risk.
 1. Insert media
 2. Wrangler detects the volume
 3. Create a project in the web UI
-4. Select files
-5. Wrangler copies to a project folder
-6. Wrangler mirrors to destination A and B
-7. Wrangler verifies all copies
+4. Choose manual or automatic ingest
+5. Select source, and optionally choose specific files (manual)
+6. Wrangler copies to a project folder
+7. Wrangler mirrors to destination A - and if desired, B and C
+8. Wrangler verifies all copies
 
 Simple on the surface. Solid underneath.
 
