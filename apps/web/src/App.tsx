@@ -219,8 +219,20 @@ function canPreviewFile(entry: FileEntry): boolean {
 
 function shouldHideSourceEntry(entry: FileEntry): boolean {
   const name = entry.relativePath.split("/").pop()?.toLowerCase() ?? "";
-  return name === ".ds_store" || name.startsWith("._");
+  const extension = name.includes(".") ? `.${name.split(".").pop()}` : "";
+  return (
+    name === ".ds_store" ||
+    name.startsWith("._") ||
+    hiddenSourceExtensions.has(extension)
+  );
 }
+
+const hiddenSourceExtensions = new Set([
+  ".blam",
+  ".cfa",
+  ".pek",
+  ".pkf"
+]);
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
@@ -846,6 +858,47 @@ export function App() {
     }
   }
 
+  async function ensureProjectFolderExists(relativePath: string) {
+    if (!selectedProjectId || relativePath === ".") {
+      return;
+    }
+
+    const folderName = relativePath.split("/").pop()?.trim();
+    const parentPath = navigateUp(relativePath);
+    if (!folderName) {
+      return;
+    }
+
+    await requestJson<{ path: string }>(`/projects/${selectedProjectId}/folders`, {
+      method: "POST",
+      body: JSON.stringify({
+        root: "project",
+        path: parentPath,
+        name: folderName
+      })
+    });
+  }
+
+  async function renameProjectFolderPath(relativePath: string, nextPath: string) {
+    if (!selectedProjectId || relativePath === "." || nextPath === "." || relativePath === nextPath) {
+      return;
+    }
+
+    const nextName = nextPath.split("/").pop()?.trim();
+    if (!nextName) {
+      return;
+    }
+
+    await requestJson<{ path: string }>(`/projects/${selectedProjectId}/folders`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        root: "project",
+        path: relativePath,
+        name: nextName
+      })
+    });
+  }
+
   async function renameManagedFolder(relativePath: string) {
     if (!selectedProjectId) {
       return;
@@ -994,19 +1047,44 @@ export function App() {
     }));
   }
 
-  function assignTargetToVolume(volumeId: string, targetPath: string) {
+  async function assignTargetToVolume(volumeId: string, targetPath: string) {
     const volumeEntries = selectedByVolume[volumeId] ?? [];
+    const currentTargetPath = autoFolderNames[volumeId];
+    const normalizedTargetPath = targetPath.trim() || ".";
+
+    try {
+      if (currentTargetPath && currentTargetPath !== normalizedTargetPath) {
+        await renameProjectFolderPath(currentTargetPath, normalizedTargetPath);
+      } else if (!currentTargetPath && normalizedTargetPath !== ".") {
+        await ensureProjectFolderExists(normalizedTargetPath);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to update auto-import folder.");
+      return;
+    }
+
     setSelectedTargets((current) => {
       const next = { ...current };
       for (const sourcePath of volumeEntries) {
-        next[sourceKey(volumeId, sourcePath)] = targetPath;
+        next[sourceKey(volumeId, sourcePath)] = normalizedTargetPath;
       }
       return next;
     });
     setAutoFolderNames((current) => ({
       ...current,
-      [volumeId]: targetPath
+      [volumeId]: normalizedTargetPath
     }));
+    setProjectDirectories((current) =>
+      [...new Set([...current.filter((directory) => directory !== currentTargetPath), normalizedTargetPath])].sort((left, right) =>
+        left.localeCompare(right)
+      )
+    );
+    setManagedFileCache({});
+    if (managedRoot === "project") {
+      await refreshManagedPath(managedPath);
+      const directories = await requestJson<string[]>(`/projects/${selectedProjectId}/directories?root=project`);
+      setProjectDirectories(directories);
+    }
   }
 
   function removePooledSource(volumeId: string, sourcePath: string) {
@@ -1175,6 +1253,43 @@ export function App() {
       cancelled = true;
     };
   }, [autoFolderNames, ingestMode, selectedVolumeIds]);
+
+  useEffect(() => {
+    if (!selectedProjectId || ingestMode !== "auto") {
+      return;
+    }
+
+    const folderNames = [...new Set(Object.values(autoFolderNames).filter((folderName) => folderName && folderName !== "."))];
+    if (folderNames.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void Promise.all(folderNames.map((folderName) => ensureProjectFolderExists(folderName)))
+      .then(async () => {
+        if (cancelled) {
+          return;
+        }
+        setManagedFileCache({});
+        if (managedRoot === "project") {
+          await refreshManagedPath(managedPath);
+        }
+        const directories = await requestJson<string[]>(`/projects/${selectedProjectId}/directories?root=project`);
+        if (!cancelled) {
+          setProjectDirectories(directories);
+        }
+      })
+      .catch((requestError) => {
+        if (!cancelled) {
+          setError(requestError instanceof Error ? requestError.message : "Unable to prepare auto-import folders.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [autoFolderNames, ingestMode, managedPath, managedRoot, selectedProjectId]);
 
   const availableManagedRoots = useMemo<Array<{ value: BrowserRoot; label: string }>>(() => {
     const rootOptions: Array<{ value: BrowserRoot; label: string }> = [
