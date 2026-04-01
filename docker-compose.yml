@@ -16,8 +16,6 @@ services:
       - /Volumes:/Volumes
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    depends_on:
-      - web
 
   worker:
     build:
@@ -40,6 +38,8 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+    depends_on:
+      - api
     ports:
       - "5173:80"
 

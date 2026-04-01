@@ -118,6 +118,8 @@ docker compose up --build
 http://<your-machine-ip>:5173
 ```
 
+For external access through a reverse proxy or Cloudflare Tunnel, point the public hostname at the web service only. The web container now proxies `/api/*` to the API internally, so the app works behind a single public origin without exposing port `4001` separately.
+
 ---
 
 ## **Requirements**

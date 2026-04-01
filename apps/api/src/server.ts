@@ -8,16 +8,23 @@ import { getDestinationSettings, hasSavedDestinationSettings, listMacDirectories
 import { createManagedFolder, deleteManagedFolder, listManagedDirectories, listManagedFiles } from "./file-browser.js";
 import {
   addJobEvent,
+  createInitialUser,
   createJob,
+  createSession,
   createProject,
+  deleteExpiredSessions,
   deleteAllProjects,
   deleteJob,
+  deleteSession,
   getJobById,
   getProjectById,
+  getUserBySessionToken,
+  hasUsers,
   listCopyRecords,
   listJobEvents,
   listJobs,
-  listProjects
+  listProjects,
+  verifyUserCredentials
 } from "./db.js";
 import { ensureDirectories, assertInsideRoot } from "./paths.js";
 import { buildVolumeThumbnail } from "./thumbnails.js";
@@ -26,11 +33,86 @@ import { getVolumeOrThrow, listManyVolumeFiles, listVolumeFiles, listVolumes } f
 ensureDirectories();
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: config.uiOrigin, credentials: true }));
 app.use(express.json({ limit: "2mb" }));
+deleteExpiredSessions();
 
 app.get("/health", (_request, response) => {
   response.json({ ok: true });
+});
+
+app.get("/auth/status", (request, response) => {
+  const user = getAuthenticatedUser(request);
+  response.json({
+    requiresSetup: !hasUsers(),
+    isAuthenticated: Boolean(user),
+    username: user?.username ?? null
+  });
+});
+
+app.post("/auth/setup", (request, response, next) => {
+  try {
+    if (hasUsers()) {
+      response.status(400).json({ error: "An account has already been created." });
+      return;
+    }
+
+    const username = String(request.body?.username ?? "");
+    const password = String(request.body?.password ?? "");
+    const user = createInitialUser({ username, password });
+    const session = createSession(user.id);
+    setSessionCookie(response, session.token, session.expiresAt);
+    response.status(201).json({ username: user.username });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/auth/login", (request, response, next) => {
+  try {
+    const username = String(request.body?.username ?? "");
+    const password = String(request.body?.password ?? "");
+    const user = verifyUserCredentials(username, password);
+    if (!user) {
+      response.status(401).json({ error: "Invalid username or password." });
+      return;
+    }
+
+    const session = createSession(user.id);
+    setSessionCookie(response, session.token, session.expiresAt);
+    response.json({ username: user.username });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/auth/logout", (request, response) => {
+  const token = getSessionToken(request);
+  if (token) {
+    deleteSession(token);
+  }
+  clearSessionCookie(response);
+  response.status(204).send();
+});
+
+app.use((request, response, next) => {
+  if (request.path === "/health" || request.path.startsWith("/auth/")) {
+    next();
+    return;
+  }
+
+  if (!hasUsers()) {
+    response.status(401).json({ error: "Create an account before using Wrangler." });
+    return;
+  }
+
+  const user = getAuthenticatedUser(request);
+  if (!user) {
+    response.status(401).json({ error: "Authentication required." });
+    return;
+  }
+
+  next();
 });
 
 app.get("/volumes", async (_request, response, next) => {
@@ -330,3 +412,34 @@ app.use((error: unknown, _request: express.Request, response: express.Response, 
 app.listen(config.port, "0.0.0.0", () => {
   console.log(`Wrangler API listening on port ${config.port}`);
 });
+
+function getSessionToken(request: express.Request): string | null {
+  const cookieHeader = request.headers.cookie;
+  if (!cookieHeader) {
+    return null;
+  }
+
+  const cookies = cookieHeader.split(";").map((cookie) => cookie.trim());
+  for (const cookie of cookies) {
+    const [name, ...valueParts] = cookie.split("=");
+    if (name === "wrangler_session") {
+      return decodeURIComponent(valueParts.join("="));
+    }
+  }
+
+  return null;
+}
+
+function getAuthenticatedUser(request: express.Request) {
+  const token = getSessionToken(request);
+  return token ? getUserBySessionToken(token) : null;
+}
+
+function setSessionCookie(response: express.Response, token: string, expiresAt: string): void {
+  const expires = new Date(expiresAt).toUTCString();
+  response.setHeader("Set-Cookie", `wrangler_session=${encodeURIComponent(token)}; Path=/; Expires=${expires}; HttpOnly; SameSite=Lax`);
+}
+
+function clearSessionCookie(response: express.Response): void {
+  response.setHeader("Set-Cookie", "wrangler_session=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax");
+}

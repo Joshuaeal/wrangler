@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -60,6 +61,21 @@ db.exec(`
     size INTEGER NOT NULL,
     verified_at TEXT,
     created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
   );
 `);
 
@@ -385,6 +401,89 @@ export function listFilesForJob(jobId: string): FileEntry[] {
     }));
 }
 
+export function hasUsers(): boolean {
+  const row = db.prepare("SELECT COUNT(*) as count FROM users").get() as { count: number };
+  return row.count > 0;
+}
+
+export function createInitialUser(input: { username: string; password: string }): { id: string; username: string } {
+  if (hasUsers()) {
+    throw new Error("An account has already been created.");
+  }
+
+  const username = input.username.trim();
+  if (!username) {
+    throw new Error("Username is required.");
+  }
+  if (input.password.length < 8) {
+    throw new Error("Password must be at least 8 characters.");
+  }
+
+  const user = {
+    id: nanoid(),
+    username,
+    passwordHash: hashPassword(input.password),
+    createdAt: now()
+  };
+
+  db.prepare("INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)")
+    .run(user.id, user.username, user.passwordHash, user.createdAt);
+
+  return { id: user.id, username: user.username };
+}
+
+export function verifyUserCredentials(username: string, password: string): { id: string; username: string } | null {
+  const row = db.prepare("SELECT id, username, password_hash FROM users WHERE username = ?").get(username.trim()) as
+    | { id: string; username: string; password_hash: string }
+    | undefined;
+
+  if (!row || !verifyPassword(password, row.password_hash)) {
+    return null;
+  }
+
+  return { id: row.id, username: row.username };
+}
+
+export function createSession(userId: string, durationDays = 30): { token: string; expiresAt: string } {
+  const token = crypto.randomBytes(32).toString("hex");
+  const expiresAt = new Date(Date.now() + durationDays * 24 * 60 * 60 * 1000).toISOString();
+
+  db.prepare("INSERT INTO sessions (id, user_id, token_hash, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
+    .run(nanoid(), userId, hashToken(token), now(), expiresAt);
+
+  return { token, expiresAt };
+}
+
+export function getUserBySessionToken(token: string): { id: string; username: string } | null {
+  const row = db.prepare(`
+    SELECT users.id, users.username, sessions.expires_at
+    FROM sessions
+    JOIN users ON users.id = sessions.user_id
+    WHERE sessions.token_hash = ?
+  `).get(hashToken(token)) as
+    | { id: string; username: string; expires_at: string }
+    | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    deleteSession(token);
+    return null;
+  }
+
+  return { id: row.id, username: row.username };
+}
+
+export function deleteSession(token: string): void {
+  db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(token));
+}
+
+export function deleteExpiredSessions(): void {
+  db.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(now());
+}
+
 function mapJobRow(row: any): Job {
   return {
     id: row.id,
@@ -399,4 +498,29 @@ function mapJobRow(row: any): Job {
     error: row.error,
     summary: row.summary
   };
+}
+
+function hashPassword(password: string): string {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const derivedKey = crypto.scryptSync(password, salt, 64).toString("hex");
+  return `${salt}:${derivedKey}`;
+}
+
+function verifyPassword(password: string, storedHash: string): boolean {
+  const [salt, expected] = storedHash.split(":");
+  if (!salt || !expected) {
+    return false;
+  }
+
+  const actual = crypto.scryptSync(password, salt, 64);
+  const expectedBuffer = Buffer.from(expected, "hex");
+  if (actual.length !== expectedBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(actual, expectedBuffer);
+}
+
+function hashToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
 }

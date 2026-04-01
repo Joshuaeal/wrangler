@@ -3,9 +3,7 @@ import type { BrowserRoot, FileEntry, Job, Project, SelectedSourceItem, Volume }
 import wranglerLogo from "./assets/wrangler-logo-alpha.png";
 import raconteurLogo from "./assets/raconteur-logo-alpha.png";
 
-const apiBase =
-  import.meta.env.VITE_API_BASE_URL ??
-  `${window.location.protocol}//${window.location.hostname}:4001`;
+const apiBase = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 type JobDetails = {
   job: Job;
@@ -25,6 +23,12 @@ type Destinations = {
 
 type DestinationSettingsResponse = Destinations & {
   isConfigured: boolean;
+};
+
+type AuthStatus = {
+  requiresSetup: boolean;
+  isAuthenticated: boolean;
+  username: string | null;
 };
 
 type MacDirectoryEntry = {
@@ -132,6 +136,7 @@ function jobProgressPercent(status: Job["status"], summary: string | null): numb
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBase}${path}`, {
+    credentials: "include",
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -142,6 +147,10 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.error ?? `Request failed for ${path}`);
+  }
+
+  if (response.status === 204) {
+    return undefined as T;
   }
 
   return response.json() as Promise<T>;
@@ -196,6 +205,14 @@ function isHostDestinationPath(value: string): boolean {
 }
 
 export function App() {
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [setupUsername, setSetupUsername] = useState("");
+  const [setupPassword, setSetupPassword] = useState("");
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [showSettings, setShowSettings] = useState(false);
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -228,6 +245,18 @@ export function App() {
   const [sourceFavorites, setSourceFavorites] = useState<SourceFavorite[]>([]);
 
   useEffect(() => {
+    const storedTheme = window.localStorage.getItem("wrangler-theme");
+    if (storedTheme === "light" || storedTheme === "dark") {
+      setTheme(storedTheme);
+    }
+  }, []);
+
+  useEffect(() => {
+    document.body.dataset.theme = theme;
+    window.localStorage.setItem("wrangler-theme", theme);
+  }, [theme]);
+
+  useEffect(() => {
     try {
       const stored = window.localStorage.getItem("wrangler-source-favorites");
       if (!stored) {
@@ -253,6 +282,19 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem("wrangler-source-favorites", JSON.stringify(sourceFavorites));
   }, [sourceFavorites]);
+
+  async function refreshAuthStatus(): Promise<AuthStatus | null> {
+    try {
+      const nextStatus = await requestJson<AuthStatus>("/auth/status");
+      setAuthStatus(nextStatus);
+      setAuthLoading(false);
+      return nextStatus;
+    } catch (requestError) {
+      setAuthLoading(false);
+      setError(requestError instanceof Error ? requestError.message : "Unable to check sign-in status.");
+      return null;
+    }
+  }
 
   useEffect(() => {
     if (!error) {
@@ -285,18 +327,31 @@ export function App() {
         setSelectedProjectId(nextProjects[0].id);
       }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to refresh.");
+      const message = requestError instanceof Error ? requestError.message : "Unable to refresh.";
+      if (message === "Authentication required.") {
+        await refreshAuthStatus();
+        return;
+      }
+      setError(message);
     }
   }
 
   useEffect(() => {
+    void refreshAuthStatus();
+  }, []);
+
+  useEffect(() => {
+    if (!authStatus?.isAuthenticated) {
+      return;
+    }
+
     void refreshAll();
     const timer = window.setInterval(() => {
       void refreshAll();
     }, 5000);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [authStatus?.isAuthenticated]);
 
   useEffect(() => {
     if (selectedVolumeIds.length === 0) {
@@ -413,6 +468,50 @@ export function App() {
       await refreshAll();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to create project.");
+    }
+  }
+
+  async function createAccount() {
+    try {
+      await requestJson<{ username: string }>("/auth/setup", {
+        method: "POST",
+        body: JSON.stringify({ username: setupUsername, password: setupPassword })
+      });
+      setSetupPassword("");
+      setLoginPassword("");
+      await refreshAuthStatus();
+      await refreshAll();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to create account.");
+    }
+  }
+
+  async function login() {
+    try {
+      await requestJson<{ username: string }>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username: loginUsername, password: loginPassword })
+      });
+      setLoginPassword("");
+      await refreshAuthStatus();
+      await refreshAll();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to sign in.");
+    }
+  }
+
+  async function logout() {
+    try {
+      await requestJson<void>("/auth/logout", { method: "POST" });
+      setAuthStatus((current) => current ? { ...current, isAuthenticated: false, username: null } : current);
+      setVolumes([]);
+      setProjects([]);
+      setJobs([]);
+      setSelectedProjectId("");
+      setJobDetails(null);
+      setShowSettings(false);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to sign out.");
     }
   }
 
@@ -806,6 +905,79 @@ export function App() {
     setManagedPath(".");
     setManagedFileCache({});
   }, [availableManagedRoots, managedRoot]);
+
+  if (authLoading) {
+    return (
+      <main className="layout authLayout">
+        <div className="brandHeader">
+          <img className="brandLogo" src={wranglerLogo} alt="Wrangler" />
+        </div>
+        <section className="authCard panel">
+          <h2>Loading Wrangler</h2>
+          <p className="muted">Checking account status...</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!authStatus?.isAuthenticated) {
+    const isSetup = authStatus?.requiresSetup ?? true;
+    return (
+      <main className="layout authLayout">
+        <div className="brandHeader">
+          <img className="brandLogo" src={wranglerLogo} alt="Wrangler" />
+        </div>
+        <section className="authCard panel">
+          <h2>{isSetup ? "Create Admin Account" : "Sign In"}</h2>
+          <p className="muted">
+            {isSetup
+              ? "Create the first local admin account for this Wrangler install."
+              : "Sign in with the local admin account to access this session."}
+          </p>
+          <div className="stack">
+            <label className="authField">
+              <span>Username</span>
+              <input
+                value={isSetup ? setupUsername : loginUsername}
+                onChange={(event) => (isSetup ? setSetupUsername(event.target.value) : setLoginUsername(event.target.value))}
+                placeholder="admin"
+              />
+            </label>
+            <label className="authField">
+              <span>Password</span>
+              <input
+                type="password"
+                value={isSetup ? setupPassword : loginPassword}
+                onChange={(event) => (isSetup ? setSetupPassword(event.target.value) : setLoginPassword(event.target.value))}
+                placeholder={isSetup ? "Minimum 8 characters" : "Password"}
+              />
+            </label>
+            <div className="pickerActions">
+              <button
+                type="button"
+                className="startIngestButton"
+                onClick={() => void (isSetup ? createAccount() : login())}
+                disabled={!(isSetup ? setupUsername.trim() && setupPassword.length >= 8 : loginUsername.trim() && loginPassword)}
+              >
+                {isSetup ? "Create Account" : "Login"}
+              </button>
+              <select value={theme} onChange={(event) => setTheme(event.target.value as "dark" | "light")}>
+                <option value="dark">Dark Theme</option>
+                <option value="light">Light Theme</option>
+              </select>
+            </div>
+          </div>
+        </section>
+        {error ? (
+          <button type="button" className="errorToast" onClick={() => setError(null)} aria-label="Dismiss error">
+            <span className="errorToastLabel">Error</span>
+            <span>{error}</span>
+            <span className="errorToastHint">Click to dismiss</span>
+          </button>
+        ) : null}
+      </main>
+    );
+  }
 
   return (
     <main className="layout">
@@ -1254,10 +1426,53 @@ export function App() {
         <button className="jobsToggleButton" onClick={() => setShowJobsPopup((current) => !current)}>
           {showJobsPopup ? "Hide Jobs" : `Jobs (${jobs.length})`}
         </button>
-        <button className="jobsToggleButton" onClick={() => setShowLogsPopup((current) => !current)}>
-          {showLogsPopup ? "Hide Logs" : "Logs"}
+        <button className="jobsToggleButton" onClick={() => setShowSettings(true)}>
+          Settings
         </button>
       </section>
+
+      {showSettings ? (
+        <aside className="pickerModal">
+          <div className="pickerModalCard settingsModalCard">
+            <div className="jobsPopupHeader">
+              <h2>Settings</h2>
+              <button onClick={() => setShowSettings(false)}>Close</button>
+            </div>
+            <div className="stack">
+              <div className="destinationRow">
+                <strong>Signed In As</strong>
+                <span>{authStatus.username}</span>
+              </div>
+              <div className="destinationRow">
+                <strong>Theme</strong>
+                <select value={theme} onChange={(event) => setTheme(event.target.value as "dark" | "light")}>
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                </select>
+              </div>
+              <div className="destinationRow">
+                <strong>Detailed Logs</strong>
+                <div className="pickerActions">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowSettings(false);
+                      setShowLogsPopup(true);
+                    }}
+                  >
+                    Open Logs
+                  </button>
+                </div>
+              </div>
+              <div className="pickerActions">
+                <button type="button" className="dangerButton" onClick={() => void logout()}>
+                  Log Out
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      ) : null}
 
       {showJobsPopup ? (
         <aside className="jobsPopup">

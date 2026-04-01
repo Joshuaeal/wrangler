@@ -38,6 +38,29 @@ body {
   --danger-fill: rgba(61, 26, 26, 0.85);
 }
 
+body[data-theme="light"] {
+  --background: #f5efe7;
+  --foreground: #1f1613;
+  --surface: #fff9f4;
+  --glass-border: rgba(61, 26, 26, 0.14);
+  --glass-fill: rgba(255, 250, 245, 0.82);
+  --surface-soft: rgba(61, 26, 26, 0.05);
+  --surface-strong: rgba(61, 26, 26, 0.1);
+  --border-soft: rgba(61, 26, 26, 0.16);
+  --focus-ring: rgba(232, 115, 46, 0.22);
+  --text-muted: rgba(31, 22, 19, 0.66);
+  --danger-border: rgba(139, 44, 44, 0.55);
+  --danger-fill: rgba(255, 230, 224, 0.96);
+  color: var(--foreground);
+  background-color: #f5efe7;
+  background-image:
+    radial-gradient(ellipse 140% 100% at 50% -50%, rgba(244, 196, 48, 0.18), transparent 60%),
+    radial-gradient(ellipse 120% 80% at 110% 20%, rgba(232, 115, 46, 0.12), transparent 55%),
+    linear-gradient(180deg, #fffaf5 0%, #f8f0e6 100%);
+  background-repeat: no-repeat, no-repeat, no-repeat;
+  background-size: auto, auto, auto;
+}
+
 button,
 input,
 select {
@@ -112,6 +135,27 @@ select {
   max-width: 1200px;
   margin: 0 auto;
   padding: 24px;
+}
+
+.authLayout {
+  min-height: 100vh;
+  display: grid;
+  align-content: center;
+  gap: 20px;
+}
+
+.authCard {
+  width: min(460px, 100%);
+  margin: 0 auto;
+}
+
+.authField {
+  display: grid;
+  gap: 6px;
+}
+
+.settingsModalCard {
+  width: min(520px, 100%);
 }
 
 .appFooter {
