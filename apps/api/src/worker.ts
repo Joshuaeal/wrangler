@@ -18,6 +18,10 @@ async function loop(): Promise<void> {
     await runJob(job.id);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown worker error";
+    if (message === "__JOB_CANCELLED__") {
+      setTimeout(loop, 1000);
+      return;
+    }
     updateJobStatus(job.id, "failed", { error: message, summary: "Ingest failed." });
     addJobEvent(job.id, "failed", message);
   } finally {

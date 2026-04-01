@@ -30,6 +30,7 @@ const ignoredVolumeEntries = new Set([
 ]);
 
 export async function runJob(jobId: string): Promise<void> {
+  assertJobNotCancelled(jobId);
   const project = getProjectByIdForJob(jobId);
   const selectedSources = getSelectedSources(jobId);
   const destinations = getDestinationSettings();
@@ -40,17 +41,21 @@ export async function runJob(jobId: string): Promise<void> {
 
   clearCopyRecords(jobId);
 
+  assertJobNotCancelled(jobId);
   updateJobStatus(jobId, "scanning", { summary: "Scanning selected files" });
   addJobEvent(jobId, "scanning", `Scanning ${totalSelections} selected paths from ${selectedSources.length} source volume(s).`);
 
   const projectRoot = assertInsideRoot(destinations.projectRoot, path.join(destinations.projectRoot, project.slug));
   await fsp.mkdir(projectRoot, { recursive: true });
 
+  assertJobNotCancelled(jobId);
   updateJobStatus(jobId, "copyingToProject", { summary: "Copying source files into the project folder" });
   for (const source of selectedSources) {
+    assertJobNotCancelled(jobId);
     await syncSelectedPaths(jobId, source, projectRoot, "project", sourcePlan, sourceOffsets, sourceBytesTotal);
   }
 
+  assertJobNotCancelled(jobId);
   updateJobStatus(jobId, "hashingProject", { summary: "Generating checksums for the project copy" });
   await checksumDestination(jobId, projectRoot, "project", true);
 
@@ -61,6 +66,7 @@ export async function runJob(jobId: string): Promise<void> {
   ].filter((destination) => destination.enabled);
 
   for (const destination of enabledDestinations) {
+    assertJobNotCancelled(jobId);
     const destinationRoot = getDestinationRoot(jobId, destination.root, destination.kind);
     const destinationPlan = await collectFileStats(projectRoot);
     const destinationBytesTotal = destinationPlan.reduce((sum, item) => sum + item.size, 0);
@@ -69,6 +75,7 @@ export async function runJob(jobId: string): Promise<void> {
     });
     await syncDirectory(jobId, projectRoot, destination.root, destination.kind, destinationBytesTotal, destination.label, destinationRoot);
 
+    assertJobNotCancelled(jobId);
     updateJobStatus(jobId, "verifyingDestinations", { summary: `Verifying ${destination.label} against the project manifest` });
     await checksumDestination(jobId, destination.root, destination.kind, false);
   }
@@ -89,6 +96,7 @@ export async function syncSelectedPaths(
   let copiedCount = 0;
 
   for (const entry of source.entries) {
+    assertJobNotCancelled(jobId);
     if (shouldIgnoreEntry(path.basename(entry.sourcePath))) {
       addJobEvent(jobId, destinationKind, `Skipped hidden system file ${entry.sourcePath}.`);
       continue;
@@ -104,6 +112,7 @@ export async function syncSelectedPaths(
         summary: `Copying to project: ${formatTransferSize(copiedBeforeItem)} / ${formatTransferSize(sourceBytesTotal)} | ${entry.sourcePath}`
       });
       await syncSingleSelection(source.sourceRoot ?? "", targetRoot, entry.sourcePath, (selectionBytes) => {
+        assertJobNotCancelled(jobId);
         const totalCopiedBytes = copiedBeforeItem + Math.min(selectionBytes, planned.bytes);
         updateJobStatus(jobId, "copyingToProject", {
           summary: `Copying to project: ${formatTransferSize(totalCopiedBytes)} / ${formatTransferSize(sourceBytesTotal)} | ${entry.sourcePath}`
@@ -139,6 +148,7 @@ export async function syncDirectory(
   await fsp.mkdir(jobDestinationRoot, { recursive: true });
 
   await runRsync(["-a", "--info=progress2", appendSlash(sourceRoot), appendSlash(jobDestinationRoot)], (progressBytes) => {
+    assertJobNotCancelled(jobId);
     updateJobStatus(jobId, "copyingToDestinations", {
       summary: `Copying to ${destinationLabel}: ${formatTransferSize(progressBytes)} / ${formatTransferSize(totalBytes)}`
     });
@@ -174,6 +184,7 @@ export async function checksumDestination(
   let processedBytes = 0;
 
   for (const file of files) {
+    assertJobNotCancelled(jobId);
     const relativePath = path.relative(destinationRoot, file.path);
     updateJobStatus(jobId, destinationKind === "project" ? "hashingProject" : "verifyingDestinations", {
       summary: `${destinationKind === "project" ? "Checksumming project" : `Verifying ${destinationKind}`}: ${formatTransferSize(processedBytes)} / ${formatTransferSize(totalBytes)} | ${relativePath}`
@@ -419,4 +430,11 @@ function getJobOrThrow(jobId: string) {
     throw new Error(`Job not found: ${jobId}`);
   }
   return job;
+}
+
+function assertJobNotCancelled(jobId: string): void {
+  const job = getJobOrThrow(jobId);
+  if (job.status === "cancelled") {
+    throw new Error("__JOB_CANCELLED__");
+  }
 }

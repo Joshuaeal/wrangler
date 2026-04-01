@@ -606,7 +606,7 @@ select {
   position: fixed;
   right: 24px;
   bottom: 24px;
-  width: min(420px, calc(100vw - 32px));
+  width: min(640px, calc(100vw - 32px));
   max-height: 70vh;
   overflow: auto;
   background:
@@ -723,7 +723,7 @@ select {
 .logsPopup {
   left: 24px;
   right: auto;
-  width: min(560px, calc(100vw - 32px));
+  width: min(640px, calc(100vw - 32px));
 }
 
 .logSummaryGrid {

@@ -33,6 +33,7 @@ type AuthStatus = {
 
 type AppSettings = {
   advancedMetadataEnabled: boolean;
+  instanceName: string;
 };
 
 type IngestMode = "manual" | "auto";
@@ -49,7 +50,6 @@ type RenameDialogState =
 
 type ConfirmDialogState =
   | { kind: "clearProjects"; title: string; message: string; confirmLabel: string }
-  | { kind: "resetDestinations"; title: string; message: string; confirmLabel: string }
   | null;
 
 type MacDirectoryEntry = {
@@ -295,11 +295,12 @@ export function App() {
   const [setupUsername, setSetupUsername] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
   const [setupAdvancedMetadata, setSetupAdvancedMetadata] = useState(false);
+  const [setupInstanceName, setSetupInstanceName] = useState("");
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [showSettings, setShowSettings] = useState(false);
-  const [appSettings, setAppSettings] = useState<AppSettings>({ advancedMetadataEnabled: false });
+  const [appSettings, setAppSettings] = useState<AppSettings>({ advancedMetadataEnabled: false, instanceName: "" });
   const [ingestMode, setIngestMode] = useState<IngestMode>("manual");
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -329,6 +330,7 @@ export function App() {
   const [renameDialog, setRenameDialog] = useState<RenameDialogState>(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
+  const [resetPassword, setResetPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showJobsPopup, setShowJobsPopup] = useState(false);
   const [showLogsPopup, setShowLogsPopup] = useState(false);
@@ -355,6 +357,12 @@ export function App() {
     document.body.dataset.theme = theme;
     window.localStorage.setItem("wrangler-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    document.title = appSettings.instanceName.trim()
+      ? `Wrangler | ${appSettings.instanceName.trim()}`
+      : "Wrangler";
+  }, [appSettings.instanceName]);
 
   useEffect(() => {
     if (!sourcePreview || sourcePreview.kind !== "file") {
@@ -647,7 +655,10 @@ export function App() {
       });
       const savedSettings = await requestJson<AppSettings>("/settings", {
         method: "PUT",
-        body: JSON.stringify({ advancedMetadataEnabled: setupAdvancedMetadata })
+        body: JSON.stringify({
+          advancedMetadataEnabled: setupAdvancedMetadata,
+          instanceName: setupInstanceName
+        })
       });
       setAppSettings(savedSettings);
       setSetupPassword("");
@@ -762,6 +773,18 @@ export function App() {
     }
   }
 
+  async function cancelJob(jobId: string) {
+    try {
+      await requestJson<void>(`/jobs/${jobId}/cancel`, { method: "POST" });
+      if (jobDetails?.job.id === jobId) {
+        await inspectJob(jobId);
+      }
+      await refreshAll();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to cancel job.");
+    }
+  }
+
   async function persistDestinations(nextDestinations: Destinations) {
     try {
       setDraftDestinations(nextDestinations);
@@ -792,6 +815,14 @@ export function App() {
 
   async function resetDestinations() {
     try {
+      const username = authStatus?.username?.trim();
+      if (!username) {
+        throw new Error("No authenticated user found.");
+      }
+      await requestJson<{ username: string }>("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ username, password: resetPassword })
+      });
       await requestJson<void>("/destinations", { method: "DELETE" });
       setDestinationsConfigured(false);
       setDestinations(null);
@@ -807,6 +838,8 @@ export function App() {
       setDestinationPickerField(null);
       setMacDirectoryPath(".");
       setDestinationPresets([]);
+      setResetPassword("");
+      setShowSettings(false);
       await refreshAll();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to reset destinations.");
@@ -1139,11 +1172,6 @@ export function App() {
 
     if (dialog.kind === "clearProjects") {
       await clearProjects();
-      return;
-    }
-
-    if (dialog.kind === "resetDestinations") {
-      await resetDestinations();
       return;
     }
 
@@ -2134,6 +2162,15 @@ export function App() {
                 </select>
               </div>
               <div className="destinationRow">
+                <strong>Instance Name</strong>
+                <input
+                  value={appSettings.instanceName}
+                  onChange={(event) => setAppSettings((current) => ({ ...current, instanceName: event.target.value }))}
+                  onBlur={() => void persistAppSettings({ instanceName: appSettings.instanceName })}
+                  placeholder="Edit suite, cart, machine name..."
+                />
+              </div>
+              <div className="destinationRow">
                 <strong>Metadata Parsing</strong>
                 <label className={`authCheckbox ${appSettings.advancedMetadataEnabled ? "authCheckboxSelected" : ""}`}>
                   <input
@@ -2155,6 +2192,29 @@ export function App() {
                     }}
                   >
                     Open Logs
+                  </button>
+                </div>
+              </div>
+              <div className="destinationRow">
+                <strong>Reset To Defaults</strong>
+                <div className="authField">
+                  <label htmlFor="reset-password-input">Confirm Password</label>
+                  <input
+                    id="reset-password-input"
+                    type="password"
+                    value={resetPassword}
+                    onChange={(event) => setResetPassword(event.target.value)}
+                    placeholder="Enter your password to reset setup"
+                  />
+                </div>
+                <div className="pickerActions">
+                  <button
+                    type="button"
+                    className="dangerButton"
+                    onClick={() => void resetDestinations()}
+                    disabled={!resetPassword.trim()}
+                  >
+                    Reset To Defaults
                   </button>
                 </div>
               </div>
@@ -2254,6 +2314,13 @@ export function App() {
                   <button className="jobLogsButton" onClick={() => void inspectJob(job.id, { openLogs: true })}>
                     Logs
                   </button>
+                  {["queued", "scanning", "copyingToProject", "hashingProject", "copyingToDestinations", "verifyingDestinations"].includes(
+                    job.status
+                  ) ? (
+                    <button className="jobLogsButton" onClick={() => void cancelJob(job.id)}>
+                      Cancel
+                    </button>
+                  ) : null}
                   <button className="jobRemoveButton" onClick={() => removeJob(job.id)}>
                     Remove
                   </button>
@@ -2389,6 +2456,15 @@ export function App() {
               </p>
               <div className="setupSteps">
                 <div className="destinationRow">
+                  <strong>Instance Name</strong>
+                  <input
+                    value={setupInstanceName}
+                    onChange={(event) => setSetupInstanceName(event.target.value)}
+                    placeholder="DIT Cart A, Studio B, Ingest 01..."
+                  />
+                  <small className="muted">Used in the browser tab title so multiple Wrangler windows are easy to tell apart.</small>
+                </div>
+                <div className="destinationRow">
                   <strong>1. Choose Project Root</strong>
                   <code>{draftDestinations.projectRoot}</code>
                   <small className="muted">
@@ -2443,20 +2519,6 @@ export function App() {
           <small>Copyright © 2026 Wrangler. Intended for open-source release.</small>
           <small>Brand styling and associated marks shown here for attribution/reference.</small>
           <div className="appFooterActions">
-            <button
-              type="button"
-              className="footerResetButton"
-              onClick={() =>
-                setConfirmDialog({
-                  kind: "resetDestinations",
-                  title: "Reset Destinations",
-                  message: "Reset destination setup for this machine and return to the first-run prompt?",
-                  confirmLabel: "Reset Destinations"
-                })
-              }
-            >
-              Reset To Defaults
-            </button>
           </div>
         </div>
         <img className="footerBrandMark" src={raconteurLogo} alt="Raconteur" />

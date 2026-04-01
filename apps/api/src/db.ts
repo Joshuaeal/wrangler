@@ -243,6 +243,31 @@ export function deleteJob(jobId: string): void {
   transaction();
 }
 
+export function cancelJob(jobId: string): void {
+  const job = getJobById(jobId);
+  if (!job) {
+    throw new Error(`Job not found: ${jobId}`);
+  }
+
+  const cancellableStatuses: JobStatus[] = [
+    "queued",
+    "scanning",
+    "copyingToProject",
+    "hashingProject",
+    "copyingToDestinations",
+    "verifyingDestinations"
+  ];
+  if (!cancellableStatuses.includes(job.status)) {
+    throw new Error(`Cannot cancel job in status ${job.status}`);
+  }
+
+  updateJobStatus(jobId, "cancelled", {
+    error: null,
+    summary: "Ingest cancelled."
+  });
+  addJobEvent(jobId, "cancelled", "Job cancelled by user.");
+}
+
 export function updateJobStatus(jobId: string, status: JobStatus, patch: { error?: string | null; summary?: string | null } = {}): void {
   const updatedAt = now();
   const current = getJobById(jobId);

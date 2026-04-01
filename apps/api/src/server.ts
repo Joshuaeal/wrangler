@@ -9,6 +9,7 @@ import { getAppSettings, saveAppSettings } from "./app-settings.js";
 import { createManagedFolder, deleteManagedFolder, listManagedDirectories, listManagedFiles, renameManagedFolder } from "./file-browser.js";
 import {
   addJobEvent,
+  cancelJob,
   createInitialUser,
   createJob,
   createSession,
@@ -63,7 +64,8 @@ app.put("/settings", async (request, response, next) => {
         advancedMetadataEnabled:
           typeof request.body?.advancedMetadataEnabled === "boolean"
             ? request.body.advancedMetadataEnabled
-            : undefined
+            : undefined,
+        instanceName: typeof request.body?.instanceName === "string" ? request.body.instanceName : undefined
       })
     );
   } catch (error) {
@@ -417,6 +419,15 @@ app.get("/jobs/:id", (request, response) => {
 app.delete("/jobs/:id", (request, response, next) => {
   try {
     deleteJob(request.params.id);
+    response.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/jobs/:id/cancel", (request, response, next) => {
+  try {
+    cancelJob(request.params.id);
     response.status(204).send();
   } catch (error) {
     next(error);
