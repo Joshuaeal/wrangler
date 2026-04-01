@@ -13,7 +13,7 @@ services:
       - ${DEST_A_ROOT_HOST:-./data/destination-a}:/storage/destination-a
       - ${DEST_B_ROOT_HOST:-./data/destination-b}:/storage/destination-b
       - /Users:/Users
-      - /Volumes:/Volumes:ro
+      - /Volumes:/Volumes
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -32,7 +32,7 @@ services:
       - ${DEST_A_ROOT_HOST:-./data/destination-a}:/storage/destination-a
       - ${DEST_B_ROOT_HOST:-./data/destination-b}:/storage/destination-b
       - /Users:/Users
-      - /Volumes:/Volumes:ro
+      - /Volumes:/Volumes
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

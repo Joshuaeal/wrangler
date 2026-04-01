@@ -4,6 +4,7 @@ dist
 .env
 data/db/*.db
 data/db/*.db-*
+data/destination-settings.json
 apps/web/dist
 **/bin
 **/obj

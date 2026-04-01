@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { browserRootSchema, ingestRequestSchema, slugifyProjectName } from "@wrangler/shared";
 import { config } from "./config.js";
-import { getDestinationSettings, listMacDirectories, saveDestinationSettings } from "./destination-settings.js";
+import { getDestinationSettings, hasSavedDestinationSettings, listMacDirectories, resetDestinationSettings, saveDestinationSettings } from "./destination-settings.js";
 import { createManagedFolder, deleteManagedFolder, listManagedDirectories, listManagedFiles } from "./file-browser.js";
 import {
   addJobEvent,
@@ -85,16 +85,16 @@ app.get("/projects", (_request, response) => {
 });
 
 app.get("/destinations", (_request, response) => {
-  response.json(getDestinationSettings());
+  response.json({
+    ...getDestinationSettings(),
+    isConfigured: hasSavedDestinationSettings()
+  });
 });
 
 app.get("/mac-directories", async (request, response, next) => {
   try {
     const relativePath = typeof request.query.path === "string" ? request.query.path : ".";
-    response.json({
-      root: config.macDestinationRoot,
-      directories: await listMacDirectories(relativePath)
-    });
+    response.json(await listMacDirectories(relativePath));
   } catch (error) {
     next(error);
   }
@@ -110,7 +110,19 @@ app.put("/destinations", async (request, response, next) => {
       destinationC: String(request.body?.destinationC ?? ""),
       destinationCEnabled: Boolean(request.body?.destinationCEnabled)
     });
-    response.json(nextSettings);
+    response.json({
+      ...nextSettings,
+      isConfigured: true
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/destinations", async (_request, response, next) => {
+  try {
+    await resetDestinationSettings();
+    response.status(204).send();
   } catch (error) {
     next(error);
   }
@@ -118,6 +130,11 @@ app.put("/destinations", async (request, response, next) => {
 
 app.post("/projects", async (request, response, next) => {
   try {
+    if (!hasSavedDestinationSettings()) {
+      response.status(400).json({ error: "Complete destination setup before creating projects." });
+      return;
+    }
+
     const name = String(request.body?.name ?? "").trim();
     if (!name) {
       response.status(400).json({ error: "Project name is required." });
@@ -262,6 +279,11 @@ app.delete("/jobs/:id", (request, response, next) => {
 
 app.post("/jobs", async (request, response, next) => {
   try {
+    if (!hasSavedDestinationSettings()) {
+      response.status(400).json({ error: "Complete destination setup before starting an ingest." });
+      return;
+    }
+
     const input = ingestRequestSchema.parse(request.body);
     const project = getProjectById(input.projectId);
     if (!project) {

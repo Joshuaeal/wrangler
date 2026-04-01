@@ -23,15 +23,36 @@ type Destinations = {
   destinationCEnabled: boolean;
 };
 
+type DestinationSettingsResponse = Destinations & {
+  isConfigured: boolean;
+};
+
 type MacDirectoryEntry = {
   name: string;
   path: string;
+};
+
+type DestinationPreset = {
+  label: string;
+  path: string;
+};
+
+type DestinationDirectoryResponse = {
+  currentPath: string;
+  directories: MacDirectoryEntry[];
+  presets: DestinationPreset[];
 };
 
 type DestinationPathField = "projectRoot" | "destinationA" | "destinationB" | "destinationC";
 
 type VolumePane = {
   volume: Volume;
+  path: string;
+};
+
+type SourceFavorite = {
+  volumeId: string;
+  volumeName: string;
   path: string;
 };
 
@@ -137,6 +158,10 @@ function toggleValue(values: string[], nextValue: string): string[] {
   return values.includes(nextValue) ? values.filter((value) => value !== nextValue) : [...values, nextValue];
 }
 
+function isHostDestinationPath(value: string): boolean {
+  return value.startsWith("/Users") || value.startsWith("/Volumes");
+}
+
 export function App() {
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -151,10 +176,12 @@ export function App() {
   const [jobDetails, setJobDetails] = useState<JobDetails | null>(null);
   const [destinations, setDestinations] = useState<Destinations | null>(null);
   const [draftDestinations, setDraftDestinations] = useState<Destinations | null>(null);
+  const [destinationsConfigured, setDestinationsConfigured] = useState(false);
   const [showDestinationPicker, setShowDestinationPicker] = useState(false);
   const [destinationPickerField, setDestinationPickerField] = useState<DestinationPathField | null>(null);
   const [macDirectoryPath, setMacDirectoryPath] = useState(".");
   const [macDirectories, setMacDirectories] = useState<MacDirectoryEntry[]>([]);
+  const [destinationPresets, setDestinationPresets] = useState<DestinationPreset[]>([]);
   const [managedRoot, setManagedRoot] = useState<BrowserRoot>("project");
   const [managedPath, setManagedPath] = useState(".");
   const [managedFileCache, setManagedFileCache] = useState<Record<string, FileEntry[]>>({});
@@ -165,6 +192,34 @@ export function App() {
   const [showLogsPopup, setShowLogsPopup] = useState(false);
   const [draggedSourceKey, setDraggedSourceKey] = useState<string | null>(null);
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
+  const [sourceFavorites, setSourceFavorites] = useState<SourceFavorite[]>([]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("wrangler-source-favorites");
+      if (!stored) {
+        return;
+      }
+
+      const parsed = JSON.parse(stored) as SourceFavorite[];
+      if (Array.isArray(parsed)) {
+        setSourceFavorites(
+          parsed.filter(
+            (favorite) =>
+              typeof favorite?.volumeId === "string" &&
+              typeof favorite?.volumeName === "string" &&
+              typeof favorite?.path === "string"
+          )
+        );
+      }
+    } catch {
+      window.localStorage.removeItem("wrangler-source-favorites");
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("wrangler-source-favorites", JSON.stringify(sourceFavorites));
+  }, [sourceFavorites]);
 
   useEffect(() => {
     if (!error) {
@@ -184,13 +239,14 @@ export function App() {
         requestJson<Volume[]>("/volumes"),
         requestJson<Project[]>("/projects"),
         requestJson<Job[]>("/jobs"),
-        requestJson<Destinations>("/destinations")
+        requestJson<DestinationSettingsResponse>("/destinations")
       ]);
 
       setVolumes(nextVolumes);
       setProjects(nextProjects);
       setJobs(nextJobs);
       setDestinations(nextDestinations);
+      setDestinationsConfigured(nextDestinations.isConfigured);
       setDraftDestinations((current) => current ?? nextDestinations);
       if (!selectedProjectId && nextProjects[0]) {
         setSelectedProjectId(nextProjects[0].id);
@@ -294,16 +350,25 @@ export function App() {
       return;
     }
 
-    void requestJson<{ root: string; directories: MacDirectoryEntry[] }>(
+    void requestJson<DestinationDirectoryResponse>(
       `/mac-directories?path=${encodeURIComponent(macDirectoryPath)}`
     )
-      .then((result) => setMacDirectories(result.directories))
+      .then((result) => {
+        setMacDirectoryPath(result.currentPath);
+        setMacDirectories(result.directories);
+        setDestinationPresets(result.presets);
+      })
       .catch((requestError) => {
         setError(requestError instanceof Error ? requestError.message : "Unable to browse Mac directories.");
       });
   }, [macDirectoryPath, showDestinationPicker]);
 
   async function createProject() {
+    if (!destinationsConfigured) {
+      setError("Choose your destination folders to finish setup before creating projects.");
+      return;
+    }
+
     try {
       const project = await requestJson<Project>("/projects", {
         method: "POST",
@@ -340,6 +405,11 @@ export function App() {
   }
 
   async function startJob() {
+    if (!destinationsConfigured) {
+      setError("Choose your destination folders to finish setup before starting an ingest.");
+      return;
+    }
+
     try {
       const job = await requestJson<Job>("/jobs", {
         method: "POST",
@@ -383,21 +453,69 @@ export function App() {
   async function persistDestinations(nextDestinations: Destinations) {
     try {
       setDraftDestinations(nextDestinations);
-      const saved = await requestJson<Destinations>("/destinations", {
+      const saved = await requestJson<DestinationSettingsResponse>("/destinations", {
         method: "PUT",
         body: JSON.stringify(nextDestinations)
       });
       setDestinations(saved);
+      setDestinationsConfigured(saved.isConfigured);
       setDraftDestinations(saved);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to save destinations.");
     }
   }
 
+  async function finishSetup() {
+    if (!draftDestinations) {
+      return;
+    }
+
+    if (!isHostDestinationPath(draftDestinations.projectRoot) || !isHostDestinationPath(draftDestinations.destinationA)) {
+      setError("Choose both Project Root and Destination A before finishing setup.");
+      return;
+    }
+
+    await persistDestinations(draftDestinations);
+  }
+
+  async function resetDestinations() {
+    const confirmed = window.confirm("Reset destination setup for this machine and return to the first-run prompt?");
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await requestJson<void>("/destinations", { method: "DELETE" });
+      setDestinationsConfigured(false);
+      setDestinations(null);
+      setDraftDestinations({
+        projectRoot: "/storage/projects",
+        destinationA: "/storage/destination-a",
+        destinationB: "/storage/destination-b",
+        destinationBEnabled: false,
+        destinationC: "/storage/destination-c",
+        destinationCEnabled: false
+      });
+      setShowDestinationPicker(false);
+      setDestinationPickerField(null);
+      setMacDirectoryPath(".");
+      setDestinationPresets([]);
+      await refreshAll();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to reset destinations.");
+    }
+  }
+
   function openDestinationPicker(field: DestinationPathField) {
     setDestinationPickerField(field);
     const currentPath = draftDestinations?.[field];
-    setMacDirectoryPath(typeof currentPath === "string" && currentPath ? currentPath : ".");
+    const nextPath =
+      typeof currentPath === "string" &&
+      (currentPath.startsWith("/Users") || currentPath.startsWith("/Volumes")) &&
+      currentPath.length > 0
+        ? currentPath
+        : ".";
+    setMacDirectoryPath(nextPath);
     setShowDestinationPicker(true);
   }
 
@@ -410,7 +528,7 @@ export function App() {
       ...draftDestinations,
       [destinationPickerField]: selectedPath
     };
-    void persistDestinations(nextDestinations);
+    setDraftDestinations(nextDestinations);
     setShowDestinationPicker(false);
     setDestinationPickerField(null);
   }
@@ -556,14 +674,34 @@ export function App() {
   const canStart = useMemo(
     () =>
       Boolean(
+        destinationsConfigured &&
         selectedProjectId &&
         selectedVolumeIds.length > 0 &&
         selectedVolumeIds.some((volumeId) => (selectedByVolume[volumeId] ?? []).length > 0)
       ),
-    [selectedByVolume, selectedProjectId, selectedVolumeIds]
+    [destinationsConfigured, selectedByVolume, selectedProjectId, selectedVolumeIds]
   );
 
   const managedPathChain = useMemo(() => getPathChain(managedPath), [managedPath]);
+
+  function toggleSourceFavorite(volumeId: string, volumeName: string, favoritePath: string) {
+    setSourceFavorites((current) => {
+      const exists = current.some((favorite) => favorite.volumeId === volumeId && favorite.path === favoritePath);
+      if (exists) {
+        return current.filter((favorite) => !(favorite.volumeId === volumeId && favorite.path === favoritePath));
+      }
+
+      return [...current, { volumeId, volumeName, path: favoritePath }].sort((left, right) =>
+        `${left.volumeName}:${left.path}`.localeCompare(`${right.volumeName}:${right.path}`)
+      );
+    });
+  }
+
+  function removeSourceFavorite(volumeId: string, favoritePath: string) {
+    setSourceFavorites((current) =>
+      current.filter((favorite) => !(favorite.volumeId === volumeId && favorite.path === favoritePath))
+    );
+  }
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -650,7 +788,7 @@ export function App() {
           <div className="stack">
             <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="New project name" />
             <div className="pickerActions">
-              <button onClick={createProject} disabled={!projectName.trim()}>
+              <button onClick={createProject} disabled={!projectName.trim() || !destinationsConfigured}>
                 Create Project
               </button>
               <button className="dangerButton" onClick={clearProjects} disabled={projects.length === 0}>
@@ -719,8 +857,29 @@ export function App() {
                       >
                         Up
                       </button>
+                      <button onClick={() => toggleSourceFavorite(pane.volume.id, pane.volume.name, pane.path)}>
+                        {sourceFavorites.some((favorite) => favorite.volumeId === pane.volume.id && favorite.path === pane.path)
+                          ? "Remove Favorite"
+                          : "Add Favorite"}
+                      </button>
                     </div>
                   </div>
+                  {sourceFavorites.some((favorite) => favorite.volumeId === pane.volume.id) ? (
+                    <div className="sourceFavoriteList">
+                      {sourceFavorites
+                        .filter((favorite) => favorite.volumeId === pane.volume.id)
+                        .map((favorite) => (
+                          <div key={`${favorite.volumeId}:${favorite.path}`} className="sourceFavoriteItem">
+                            <button type="button" className="sourceFavoriteButton" onClick={() => navigateVolume(pane.volume.id, favorite.path)}>
+                              {favorite.path === "." ? "Root" : favorite.path}
+                            </button>
+                            <button type="button" className="sourceFavoriteRemove" onClick={() => removeSourceFavorite(pane.volume.id, favorite.path)}>
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                    </div>
+                  ) : null}
                   <div className="finderColumns">
                     {getPathChain(pane.path).map((pathEntry) => (
                       <div key={`${pane.volume.id}:${pathEntry}`} className="finderColumn">
@@ -1182,16 +1341,32 @@ export function App() {
                 <strong>Current Path</strong>
                 <code>{macDirectoryPath}</code>
                 <div className="pickerActions">
-                  <button onClick={() => setMacDirectoryPath(".")}>Root</button>
+                  <button onClick={() => setMacDirectoryPath("/Users")}>Users</button>
+                  <button onClick={() => setMacDirectoryPath("/Volumes")}>Volumes</button>
                   <button
-                    onClick={() => setMacDirectoryPath(macDirectoryPath === "." ? "." : macDirectoryPath.split("/").slice(0, -1).join("/") || ".")}
-                    disabled={macDirectoryPath === "."}
+                    onClick={() =>
+                      setMacDirectoryPath(
+                        macDirectoryPath === "/Users" || macDirectoryPath === "/Volumes"
+                          ? macDirectoryPath
+                          : macDirectoryPath.split("/").slice(0, -1).join("/") || "/Users"
+                      )
+                    }
+                    disabled={macDirectoryPath === "/Users" || macDirectoryPath === "/Volumes"}
                   >
                     Up
                   </button>
                   <button onClick={() => applyPickedDestination(macDirectoryPath)}>Use This Folder</button>
                 </div>
               </div>
+              {destinationPresets.length > 0 ? (
+                <div className="destinationPresetRow">
+                  {destinationPresets.map((preset) => (
+                    <button key={preset.path} type="button" className="destinationPresetButton" onClick={() => setMacDirectoryPath(preset.path)}>
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <ul className="fileList">
                 {macDirectories.map((directory) => (
                   <li key={directory.path}>
@@ -1202,6 +1377,59 @@ export function App() {
                   </li>
                 ))}
               </ul>
+            </div>
+          </div>
+        </aside>
+      ) : null}
+
+      {draftDestinations && !destinationsConfigured && !showDestinationPicker ? (
+        <aside className="pickerModal">
+          <div className="pickerModalCard setupModalCard">
+            <div className="jobsPopupHeader">
+              <h2>Finish Setup</h2>
+            </div>
+            <div className="stack">
+              <p className="muted">
+                This machine needs its own destination folders before Wrangler can create projects or write files.
+              </p>
+              <div className="setupSteps">
+                <div className="destinationRow">
+                  <strong>1. Choose Project Root</strong>
+                  <code>{draftDestinations.projectRoot}</code>
+                  <small className="muted">
+                    {isHostDestinationPath(draftDestinations.projectRoot) ? "Ready" : "Choose a folder in /Users or /Volumes."}
+                  </small>
+                  <div className="pickerActions">
+                    <button onClick={() => openDestinationPicker("projectRoot")}>Choose Folder</button>
+                  </div>
+                </div>
+                <div className="destinationRow">
+                  <strong>2. Choose Destination A</strong>
+                  <code>{draftDestinations.destinationA}</code>
+                  <small className="muted">
+                    {isHostDestinationPath(draftDestinations.destinationA) ? "Ready" : "Choose a folder in /Users or /Volumes."}
+                  </small>
+                  <div className="pickerActions">
+                    <button onClick={() => openDestinationPicker("destinationA")}>Choose Folder</button>
+                  </div>
+                </div>
+              </div>
+              <p className="muted">
+                Optional third and fourth copies can be enabled later from the Copy Destinations panel.
+              </p>
+              <div className="pickerActions">
+                <button
+                  type="button"
+                  className="startIngestButton"
+                  onClick={() => void finishSetup()}
+                  disabled={
+                    !isHostDestinationPath(draftDestinations.projectRoot) ||
+                    !isHostDestinationPath(draftDestinations.destinationA)
+                  }
+                >
+                  Finish Setup
+                </button>
+              </div>
             </div>
           </div>
         </aside>
@@ -1219,6 +1447,11 @@ export function App() {
         <div className="appFooterCopy">
           <small>Copyright © 2026 Wrangler. Intended for open-source release.</small>
           <small>Brand styling and associated marks shown here for attribution/reference.</small>
+          <div className="appFooterActions">
+            <button type="button" className="footerResetButton" onClick={resetDestinations}>
+              Reset To Defaults
+            </button>
+          </div>
         </div>
         <img className="footerBrandMark" src={raconteurLogo} alt="Raconteur" />
       </footer>
