@@ -25,7 +25,8 @@ const ignoredVolumeEntries = new Set([
   ".Spotlight-V100",
   ".Trashes",
   ".TemporaryItems",
-  ".fseventsd"
+  ".fseventsd",
+  ".DS_Store"
 ]);
 
 export async function runJob(jobId: string): Promise<void> {
@@ -33,6 +34,8 @@ export async function runJob(jobId: string): Promise<void> {
   const selectedSources = getSelectedSources(jobId);
   const destinations = getDestinationSettings();
   const totalSelections = selectedSources.reduce((sum, source) => sum + source.entries.length, 0);
+  const sourcePlan = await buildSourceTransferPlan(selectedSources);
+  const sourceBytesTotal = [...sourcePlan.values()].reduce((sum, item) => sum + item.bytes, 0);
 
   clearCopyRecords(jobId);
 
@@ -44,7 +47,7 @@ export async function runJob(jobId: string): Promise<void> {
 
   updateJobStatus(jobId, "copyingToProject", { summary: "Copying source files into the project folder" });
   for (const source of selectedSources) {
-    await syncSelectedPaths(jobId, source, projectRoot, "project");
+    await syncSelectedPaths(jobId, source, projectRoot, "project", sourcePlan, sourceBytesTotal);
   }
 
   updateJobStatus(jobId, "hashingProject", { summary: "Generating checksums for the project copy" });
@@ -57,8 +60,13 @@ export async function runJob(jobId: string): Promise<void> {
   ].filter((destination) => destination.enabled);
 
   for (const destination of enabledDestinations) {
-    updateJobStatus(jobId, "copyingToDestinations", { summary: `Copying the project folder to ${destination.label}` });
-    await syncDirectory(jobId, projectRoot, destination.root, destination.kind);
+    const destinationRoot = getDestinationRoot(jobId, destination.root, destination.kind);
+    const destinationPlan = await collectFileStats(projectRoot);
+    const destinationBytesTotal = destinationPlan.reduce((sum, item) => sum + item.size, 0);
+    updateJobStatus(jobId, "copyingToDestinations", {
+      summary: `Copying to ${destination.label}: 0 B / ${formatTransferSize(destinationBytesTotal)}`
+    });
+    await syncDirectory(jobId, projectRoot, destination.root, destination.kind, destinationBytesTotal, destination.label, destinationRoot);
 
     updateJobStatus(jobId, "verifyingDestinations", { summary: `Verifying ${destination.label} against the project manifest` });
     await checksumDestination(jobId, destination.root, destination.kind, false);
@@ -72,26 +80,66 @@ export async function syncSelectedPaths(
   jobId: string,
   source: SourceSelection,
   destinationRoot: string,
-  destinationKind: DestinationKind
+  destinationKind: DestinationKind,
+  sourcePlan: Map<string, { bytes: number; files: number }>,
+  sourceBytesTotal: number
 ): Promise<void> {
   let copiedCount = 0;
+  let copiedBytes = 0;
 
   for (const entry of source.entries) {
+    if (shouldIgnoreEntry(path.basename(entry.sourcePath))) {
+      addJobEvent(jobId, destinationKind, `Skipped hidden system file ${entry.sourcePath}.`);
+      continue;
+    }
+
     const targetRoot = assertInsideRoot(destinationRoot, path.join(destinationRoot, entry.targetPath || "."));
     await fsp.mkdir(targetRoot, { recursive: true });
-    await syncSingleSelection(source.sourceRoot ?? "", targetRoot, entry.sourcePath);
+    try {
+      const planKey = `${source.volumeId}:${entry.sourcePath}`;
+      const planned = sourcePlan.get(planKey) ?? { bytes: 0, files: 0 };
+      updateJobStatus(jobId, "copyingToProject", {
+        summary: `Copying to project: ${formatTransferSize(copiedBytes)} / ${formatTransferSize(sourceBytesTotal)} | ${entry.sourcePath}`
+      });
+      await syncSingleSelection(source.sourceRoot ?? "", targetRoot, entry.sourcePath);
+      copiedBytes += planned.bytes;
+      updateJobStatus(jobId, "copyingToProject", {
+        summary: `Copying to project: ${formatTransferSize(copiedBytes)} / ${formatTransferSize(sourceBytesTotal)} | ${entry.sourcePath}`
+      });
+    } catch (error) {
+      if (isIgnorableFsError(error)) {
+        addJobEvent(jobId, destinationKind, `Skipped inaccessible source item ${entry.sourcePath}.`);
+        continue;
+      }
+      throw error;
+    }
     copiedCount += 1;
   }
 
   addJobEvent(jobId, destinationKind, `Copied ${copiedCount} selected source item(s) into ${destinationRoot}.`);
 }
 
-export async function syncDirectory(jobId: string, sourceRoot: string, destinationBase: string, destinationKind: DestinationKind): Promise<void> {
+export async function syncDirectory(
+  jobId: string,
+  sourceRoot: string,
+  destinationBase: string,
+  destinationKind: DestinationKind,
+  totalBytes: number,
+  destinationLabel: string,
+  destinationRoot: string
+): Promise<void> {
   const project = getProjectByIdForJob(jobId);
-  const destinationRoot = path.join(destinationBase, project.slug);
-  await fsp.mkdir(destinationRoot, { recursive: true });
+  const jobDestinationRoot = path.join(destinationBase, project.slug);
+  await fsp.mkdir(jobDestinationRoot, { recursive: true });
 
-  await runRsync(["-a", appendSlash(sourceRoot), appendSlash(destinationRoot)]);
+  await runRsync(["-a", "--info=progress2", appendSlash(sourceRoot), appendSlash(jobDestinationRoot)], (progressBytes) => {
+    updateJobStatus(jobId, "copyingToDestinations", {
+      summary: `Copying to ${destinationLabel}: ${formatTransferSize(progressBytes)} / ${formatTransferSize(totalBytes)}`
+    });
+  });
+  updateJobStatus(jobId, "copyingToDestinations", {
+    summary: `Copying to ${destinationLabel}: ${formatTransferSize(totalBytes)} / ${formatTransferSize(totalBytes)}`
+  });
   addJobEvent(jobId, destinationKind, `Mirrored ${sourceRoot} into ${destinationRoot}.`);
 }
 
@@ -102,7 +150,7 @@ export async function checksumDestination(
   overwrite: boolean
 ): Promise<void> {
   const destinationRoot = getDestinationRoot(jobId, destinationBase, destinationKind);
-  const files = await walkFiles(destinationRoot);
+  const files = await collectFileStats(destinationRoot);
   if (overwrite) {
     clearCopyRecordsForDestination(jobId, destinationKind);
   }
@@ -116,10 +164,15 @@ export async function checksumDestination(
             .map((record) => [record.relativePath, record.checksum])
         );
 
-  for (const filePath of files) {
-    const relativePath = path.relative(destinationRoot, filePath);
-    const stats = await fsp.stat(filePath);
-    const checksum = await sha256File(filePath);
+  const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  let processedBytes = 0;
+
+  for (const file of files) {
+    const relativePath = path.relative(destinationRoot, file.path);
+    updateJobStatus(jobId, destinationKind === "project" ? "hashingProject" : "verifyingDestinations", {
+      summary: `${destinationKind === "project" ? "Checksumming project" : `Verifying ${destinationKind}`}: ${formatTransferSize(processedBytes)} / ${formatTransferSize(totalBytes)} | ${relativePath}`
+    });
+    const checksum = await sha256File(file.path);
 
      if (manifest) {
       const expectedChecksum = manifest.get(relativePath);
@@ -135,11 +188,12 @@ export async function checksumDestination(
       jobId,
       relativePath,
       destinationKind,
-      absolutePath: filePath,
+      absolutePath: file.path,
       checksum,
-      size: stats.size,
+      size: file.size,
       verifiedAt: new Date().toISOString()
     });
+    processedBytes += file.size;
   }
 
   if (manifest && manifest.size !== files.length) {
@@ -149,21 +203,22 @@ export async function checksumDestination(
   addJobEvent(jobId, destinationKind, `Checksummed ${files.length} files in ${destinationRoot}.`);
 }
 
-async function walkFiles(root: string): Promise<string[]> {
+async function collectFileStats(root: string): Promise<Array<{ path: string; size: number }>> {
   const entries = await fsp.readdir(root, { withFileTypes: true });
-  const files: string[] = [];
+  const files: Array<{ path: string; size: number }> = [];
 
   for (const entry of entries) {
-    if (ignoredVolumeEntries.has(entry.name)) {
+    if (shouldIgnoreEntry(entry.name)) {
       continue;
     }
 
     const absolutePath = path.join(root, entry.name);
     try {
       if (entry.isDirectory()) {
-        files.push(...(await walkFiles(absolutePath)));
+        files.push(...(await collectFileStats(absolutePath)));
       } else if (entry.isFile()) {
-        files.push(absolutePath);
+        const stats = await fsp.stat(absolutePath);
+        files.push({ path: absolutePath, size: stats.size });
       }
     } catch (error) {
       if (isIgnorableFsError(error)) {
@@ -202,13 +257,37 @@ async function sha256File(filePath: string): Promise<string> {
   });
 }
 
-async function runRsync(args: string[]): Promise<void> {
+async function runRsync(args: string[], onProgress?: (bytes: number) => void): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const child = spawn("rsync", args, { stdio: "pipe" });
     let stderr = "";
 
+    const parseProgress = (chunk: Buffer) => {
+      if (!onProgress) {
+        return;
+      }
+
+      const lines = chunk
+        .toString()
+        .split(/\r|\n/)
+        .map((line) => line.trim());
+
+      for (const line of lines) {
+        const match = line.match(/^([\d,]+)\s+\d+%/);
+        if (!match) {
+          continue;
+        }
+        onProgress(Number(match[1].replace(/,/g, "")));
+      }
+    };
+
     child.stderr.on("data", (chunk) => {
       stderr += chunk.toString();
+      parseProgress(chunk);
+    });
+
+    child.stdout.on("data", (chunk) => {
+      parseProgress(chunk);
     });
 
     child.on("close", (code) => {
@@ -232,6 +311,59 @@ function isIgnorableFsError(error: unknown): boolean {
     error.code === "EPERM" ||
     error.code === "EACCES"
   );
+}
+
+function shouldIgnoreEntry(name: string): boolean {
+  return ignoredVolumeEntries.has(name) || name.startsWith("._");
+}
+
+async function buildSourceTransferPlan(sources: SourceSelection[]): Promise<Map<string, { bytes: number; files: number }>> {
+  const plan = new Map<string, { bytes: number; files: number }>();
+
+  for (const source of sources) {
+    for (const entry of source.entries) {
+      const absoluteSourcePath = path.join(source.sourceRoot ?? "", entry.sourcePath);
+      try {
+        const stats = await fsp.stat(absoluteSourcePath);
+        if (stats.isDirectory()) {
+          const files = await collectFileStats(absoluteSourcePath);
+          plan.set(`${source.volumeId}:${entry.sourcePath}`, {
+            bytes: files.reduce((sum, file) => sum + file.size, 0),
+            files: files.length
+          });
+          continue;
+        }
+
+        plan.set(`${source.volumeId}:${entry.sourcePath}`, { bytes: stats.size, files: 1 });
+      } catch (error) {
+        if (isIgnorableFsError(error)) {
+          plan.set(`${source.volumeId}:${entry.sourcePath}`, { bytes: 0, files: 0 });
+          continue;
+        }
+        throw error;
+      }
+    }
+  }
+
+  return plan;
+}
+
+function formatTransferSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  const precision = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
 }
 
 function getProjectByIdForJob(jobId: string) {

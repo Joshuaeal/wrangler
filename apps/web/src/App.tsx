@@ -133,7 +133,7 @@ function canPreviewFile(entry: FileEntry): boolean {
 
 function shouldHideSourceEntry(entry: FileEntry): boolean {
   const name = entry.relativePath.split("/").pop()?.toLowerCase() ?? "";
-  return name === ".ds_store";
+  return name === ".ds_store" || name.startsWith("._");
 }
 
 function formatFileSize(bytes: number): string {

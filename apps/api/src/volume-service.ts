@@ -9,7 +9,8 @@ const ignoredVolumeEntries = new Set([
   ".Spotlight-V100",
   ".Trashes",
   ".TemporaryItems",
-  ".fseventsd"
+  ".fseventsd",
+  ".DS_Store"
 ]);
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -93,7 +94,7 @@ export async function listManyVolumeFiles(volumeIds: string[]): Promise<Array<{ 
 }
 
 function shouldIgnoreEntry(name: string): boolean {
-  return ignoredVolumeEntries.has(name);
+  return ignoredVolumeEntries.has(name) || name.startsWith("._");
 }
 
 function isIgnorableFsError(error: unknown): boolean {
