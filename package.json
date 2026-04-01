@@ -1,0 +1,17 @@
+{
+  "name": "wrangler",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "apps/host-helper",
+    "packages/shared"
+  ],
+  "scripts": {
+    "build": "npm run build -w @wrangler/shared && npm run build -w @wrangler/api && npm run build -w @wrangler/web && npm run build -w @wrangler/host-helper",
+    "dev": "npm run dev -w @wrangler/api",
+    "lint": "npm run lint -w @wrangler/api && npm run lint -w @wrangler/web && npm run lint -w @wrangler/host-helper",
+    "start": "npm run start -w @wrangler/api"
+  }
+}

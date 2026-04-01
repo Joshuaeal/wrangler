@@ -1,0 +1,9 @@
+node_modules
+dist
+.DS_Store
+.env
+data/db/*.db
+data/db/*.db-*
+apps/web/dist
+**/bin
+**/obj

@@ -1,0 +1,45 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-4001}:4001"
+    volumes:
+      - ./data:/data
+      - ${PROJECTS_ROOT_HOST:-./data/projects}:/storage/projects
+      - ${DEST_A_ROOT_HOST:-./data/destination-a}:/storage/destination-a
+      - ${DEST_B_ROOT_HOST:-./data/destination-b}:/storage/destination-b
+      - /Users:/Users
+      - /Volumes:/Volumes:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - web
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - .env
+    command: ["node", "dist/worker.js"]
+    volumes:
+      - ./data:/data
+      - ${PROJECTS_ROOT_HOST:-./data/projects}:/storage/projects
+      - ${DEST_A_ROOT_HOST:-./data/destination-a}:/storage/destination-a
+      - ${DEST_B_ROOT_HOST:-./data/destination-b}:/storage/destination-b
+      - /Users:/Users
+      - /Volumes:/Volumes:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "5173:80"
+
