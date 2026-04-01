@@ -42,7 +42,7 @@ Wrangler removes that risk.
 * **Job tracking**
   Full visibility of ingest status and results
 
-*  * **Headless operation**
+* **Headless operation**
   Runs independently of the UI, allowing ingest jobs to continue uninterrupted even if the browser is closed. Wrangler can run directly on the host machine or be operated from another device on the same network.
 
 ---
