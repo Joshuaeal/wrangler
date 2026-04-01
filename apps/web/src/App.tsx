@@ -42,6 +42,11 @@ type AutoImportPlan = {
   entries: Array<{ sourcePath: string }>;
 };
 
+type RenameDialogState =
+  | { kind: "managed"; relativePath: string; currentName: string }
+  | { kind: "auto"; volumeId: string; currentPath: string; currentName: string }
+  | null;
+
 type MacDirectoryEntry = {
   name: string;
   path: string;
@@ -316,6 +321,8 @@ export function App() {
   const [projectDirectories, setProjectDirectories] = useState<string[]>(["."]);
   const [newFolderName, setNewFolderName] = useState("");
   const [autoFolderNames, setAutoFolderNames] = useState<Record<string, string>>({});
+  const [renameDialog, setRenameDialog] = useState<RenameDialogState>(null);
+  const [renameValue, setRenameValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [showJobsPopup, setShowJobsPopup] = useState(false);
   const [showLogsPopup, setShowLogsPopup] = useState(false);
@@ -325,7 +332,11 @@ export function App() {
   const [sourceMetadataLoading, setSourceMetadataLoading] = useState(false);
   const [sourceFavorites, setSourceFavorites] = useState<SourceFavorite[]>([]);
   const finderColumnsRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const sourcePaneRefs = useRef<Record<string, HTMLElement | null>>({});
+  const autoFolderNamesRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    autoFolderNamesRef.current = autoFolderNames;
+  }, [autoFolderNames]);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("wrangler-theme");
@@ -499,9 +510,7 @@ export function App() {
     };
 
     for (const pane of Object.values(volumePanes)) {
-      const paneElement = sourcePaneRefs.current[pane.volume.id];
       const container = finderColumnsRefs.current[pane.volume.id];
-      paneElement?.scrollIntoView({ block: "start", inline: "nearest" });
       if (!container) {
         continue;
       }
@@ -899,14 +908,8 @@ export function App() {
     });
   }
 
-  async function renameManagedFolder(relativePath: string) {
+  async function renameManagedFolder(relativePath: string, nextName: string) {
     if (!selectedProjectId) {
-      return;
-    }
-
-    const currentName = relativePath.split("/").pop() ?? relativePath;
-    const nextName = window.prompt("Rename folder", currentName)?.trim();
-    if (!nextName || nextName === currentName) {
       return;
     }
 
@@ -970,6 +973,14 @@ export function App() {
       await refreshManagedPath(managedPath === relativePath || managedPath.startsWith(`${relativePath}/`) ? navigateUp(relativePath) : managedPath);
       const directories = await requestJson<string[]>(`/projects/${selectedProjectId}/directories?root=${managedRoot}`);
       setProjectDirectories(directories);
+      setAutoFolderNames((current) =>
+        Object.fromEntries(Object.entries(current).filter(([, value]) => value !== relativePath))
+      );
+      setSelectedTargets((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([key, value]) => [key, value === relativePath ? "." : value])
+        )
+      );
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to delete folder.");
     }
@@ -1087,6 +1098,41 @@ export function App() {
     }
   }
 
+  function openRenameDialog(dialog: Exclude<RenameDialogState, null>) {
+    setRenameDialog(dialog);
+    setRenameValue(dialog.currentName);
+  }
+
+  function closeRenameDialog() {
+    setRenameDialog(null);
+    setRenameValue("");
+  }
+
+  async function submitRenameDialog() {
+    if (!renameDialog) {
+      return;
+    }
+
+    const nextName = renameValue.trim();
+    if (!nextName || nextName === renameDialog.currentName) {
+      closeRenameDialog();
+      return;
+    }
+
+    try {
+      if (renameDialog.kind === "managed") {
+        await renameManagedFolder(renameDialog.relativePath, nextName);
+      } else {
+        const parentPath = navigateUp(renameDialog.currentPath);
+        const nextPath = parentPath === "." ? nextName : `${parentPath}/${nextName}`;
+        await assignTargetToVolume(renameDialog.volumeId, nextPath);
+      }
+      closeRenameDialog();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to rename folder.");
+    }
+  }
+
   function removePooledSource(volumeId: string, sourcePath: string) {
     toggleSelectedSource(volumeId, sourcePath, false);
   }
@@ -1200,7 +1246,7 @@ export function App() {
         const nextAutoFolderNames: Record<string, string> = {};
 
         for (const [index, plan] of plans.entries()) {
-          const targetFolder = autoFolderNames[plan.volumeId] ?? String(index + 1);
+          const targetFolder = autoFolderNamesRef.current[plan.volumeId] ?? String(index + 1);
           nextSelectedByVolume[plan.volumeId] = plan.entries.map((entry) => entry.sourcePath).sort();
           nextAutoFolderNames[plan.volumeId] = targetFolder;
           for (const entry of plan.entries) {
@@ -1252,7 +1298,13 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [autoFolderNames, ingestMode, selectedVolumeIds]);
+  }, [ingestMode, selectedVolumeIds]);
+
+  useEffect(() => {
+    setAutoFolderNames((current) =>
+      Object.fromEntries(Object.entries(current).filter(([volumeId]) => selectedVolumeIds.includes(volumeId)))
+    );
+  }, [selectedVolumeIds]);
 
   useEffect(() => {
     if (!selectedProjectId || ingestMode !== "auto") {
@@ -1495,9 +1547,6 @@ export function App() {
                 <article
                   key={pane.volume.id}
                   className="subPanel"
-                  ref={(element) => {
-                    sourcePaneRefs.current[pane.volume.id] = element;
-                  }}
                 >
                   <h3>{pane.volume.name}</h3>
                   <div className="muted">{pane.volume.mountPath}</div>
@@ -1814,16 +1863,14 @@ export function App() {
                     {ingestMode === "auto" ? (
                       <button
                         type="button"
-                        onClick={() => {
-                          const nextName = window.prompt("Rename auto-import folder", source.targetPath)?.trim();
-                          if (!nextName) {
-                            return;
-                          }
-                          assignTargetToVolume(source.volumeId, nextName);
-                          setProjectDirectories((current) =>
-                            [...new Set([...current, nextName])].sort((left, right) => left.localeCompare(right))
-                          );
-                        }}
+                        onClick={() =>
+                          openRenameDialog({
+                            kind: "auto",
+                            volumeId: source.volumeId,
+                            currentPath: source.targetPath,
+                            currentName: source.targetPath.split("/").pop() ?? source.targetPath
+                          })
+                        }
                       >
                         Rename Folder
                       </button>
@@ -1921,7 +1968,15 @@ export function App() {
                           </button>
                           {entry.kind === "directory" ? (
                             <div className="rowActions">
-                              <button onClick={() => void renameManagedFolder(entry.relativePath)}>
+                              <button
+                                onClick={() =>
+                                  openRenameDialog({
+                                    kind: "managed",
+                                    relativePath: entry.relativePath,
+                                    currentName: entry.relativePath.split("/").pop() ?? entry.relativePath
+                                  })
+                                }
+                              >
                                 Rename Folder
                               </button>
                               <button className="dangerButton" onClick={() => deleteManagedFolder(entry.relativePath)}>
@@ -2079,6 +2134,39 @@ export function App() {
               <div className="pickerActions">
                 <button type="button" className="dangerButton" onClick={() => void logout()}>
                   Log Out
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      ) : null}
+
+      {renameDialog ? (
+        <aside className="pickerModal">
+          <div className="pickerModalCard renameModalCard">
+            <div className="jobsPopupHeader">
+              <h2>Rename Folder</h2>
+              <button onClick={closeRenameDialog}>Close</button>
+            </div>
+            <div className="stack">
+              <div className="destinationRow">
+                <strong>Current</strong>
+                <code>{renameDialog.currentName}</code>
+              </div>
+              <div className="authField">
+                <label htmlFor="rename-folder-input">New Folder Name</label>
+                <input
+                  id="rename-folder-input"
+                  value={renameValue}
+                  onChange={(event) => setRenameValue(event.target.value)}
+                  placeholder="Folder name"
+                  autoFocus
+                />
+              </div>
+              <div className="pickerActions">
+                <button onClick={closeRenameDialog}>Cancel</button>
+                <button onClick={() => void submitRenameDialog()} disabled={!renameValue.trim()}>
+                  Save Rename
                 </button>
               </div>
             </div>

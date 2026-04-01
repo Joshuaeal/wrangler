@@ -182,6 +182,10 @@ select {
   width: min(520px, 100%);
 }
 
+.renameModalCard {
+  width: min(440px, 100%);
+}
+
 .appFooter {
   display: flex;
   justify-content: space-between;
