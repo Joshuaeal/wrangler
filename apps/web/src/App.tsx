@@ -39,7 +39,6 @@ type IngestMode = "manual" | "auto";
 
 type AutoImportPlan = {
   volumeId: string;
-  suggestedFolderName: string;
   entries: Array<{ sourcePath: string }>;
 };
 
@@ -304,6 +303,7 @@ export function App() {
   const [managedFileCache, setManagedFileCache] = useState<Record<string, FileEntry[]>>({});
   const [projectDirectories, setProjectDirectories] = useState<string[]>(["."]);
   const [newFolderName, setNewFolderName] = useState("");
+  const [autoFolderNames, setAutoFolderNames] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [showJobsPopup, setShowJobsPopup] = useState(false);
   const [showLogsPopup, setShowLogsPopup] = useState(false);
@@ -701,12 +701,11 @@ export function App() {
     }
 
     try {
-      const sources = ingestMode === "auto" ? await buildAutoSourcePayload() : buildSourcePayload();
       const job = await requestJson<Job>("/jobs", {
         method: "POST",
         body: JSON.stringify({
           projectId: selectedProjectId,
-          sources
+          sources: buildSourcePayload()
         })
       });
 
@@ -847,6 +846,56 @@ export function App() {
     }
   }
 
+  async function renameManagedFolder(relativePath: string) {
+    if (!selectedProjectId) {
+      return;
+    }
+
+    const currentName = relativePath.split("/").pop() ?? relativePath;
+    const nextName = window.prompt("Rename folder", currentName)?.trim();
+    if (!nextName || nextName === currentName) {
+      return;
+    }
+
+    try {
+      const result = await requestJson<{ path: string }>(`/projects/${selectedProjectId}/folders`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          root: managedRoot,
+          path: relativePath,
+          name: nextName
+        })
+      });
+
+      setManagedFileCache({});
+      const nextManagedPath =
+        managedPath === relativePath || managedPath.startsWith(`${relativePath}/`)
+          ? managedPath.replace(relativePath, result.path)
+          : managedPath;
+      setManagedPath(nextManagedPath);
+      await refreshManagedPath(nextManagedPath);
+      const directories = await requestJson<string[]>(`/projects/${selectedProjectId}/directories?root=${managedRoot}`);
+      setProjectDirectories(directories);
+      setSelectedTargets((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([key, value]) => {
+            if (value === relativePath || value.startsWith(`${relativePath}/`)) {
+              return [key, value.replace(relativePath, result.path)];
+            }
+            return [key, value];
+          })
+        )
+      );
+      setAutoFolderNames((current) =>
+        Object.fromEntries(
+          Object.entries(current).map(([volumeId, value]) => [volumeId, value === relativePath ? result.path : value])
+        )
+      );
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to rename folder.");
+    }
+  }
+
   async function deleteManagedFolder(relativePath: string) {
     if (!selectedProjectId) {
       return;
@@ -945,6 +994,21 @@ export function App() {
     }));
   }
 
+  function assignTargetToVolume(volumeId: string, targetPath: string) {
+    const volumeEntries = selectedByVolume[volumeId] ?? [];
+    setSelectedTargets((current) => {
+      const next = { ...current };
+      for (const sourcePath of volumeEntries) {
+        next[sourceKey(volumeId, sourcePath)] = targetPath;
+      }
+      return next;
+    });
+    setAutoFolderNames((current) => ({
+      ...current,
+      [volumeId]: targetPath
+    }));
+  }
+
   function removePooledSource(volumeId: string, sourcePath: string) {
     toggleSelectedSource(volumeId, sourcePath, false);
   }
@@ -960,31 +1024,6 @@ export function App() {
         }))
       }))
       .filter((source) => source.entries.length > 0);
-  }
-
-  async function buildAutoSourcePayload(): Promise<Array<{ volumeId: string; sourceRoot: string; entries: SelectedSourceItem[] }>> {
-    const plans = await Promise.all(
-      selectedVolumeIds.map((volumeId, index) =>
-        requestJson<AutoImportPlan>(`/volumes/${volumeId}/auto-import-plan?index=${index + 1}`)
-      )
-    );
-
-    const usedNames = new Map<string, number>();
-    return plans.map((plan, index) => {
-      const baseName = (plan.suggestedFolderName || `Card ${index + 1}`).trim();
-      const seenCount = usedNames.get(baseName) ?? 0;
-      usedNames.set(baseName, seenCount + 1);
-      const targetFolder = seenCount === 0 ? baseName : `${baseName} ${seenCount + 1}`;
-
-      return {
-        volumeId: plan.volumeId,
-        sourceRoot: "",
-        entries: plan.entries.map((entry) => ({
-          sourcePath: entry.sourcePath,
-          targetPath: targetFolder
-        }))
-      };
-    });
   }
 
   const canStart = useMemo(
@@ -1062,6 +1101,80 @@ export function App() {
         }),
     [selectedByVolume, selectedTargets, selectedVolumeIds, volumes]
   );
+
+  useEffect(() => {
+    if (ingestMode !== "auto" || selectedVolumeIds.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void Promise.all(
+      selectedVolumeIds.map((volumeId) => requestJson<AutoImportPlan>(`/volumes/${volumeId}/auto-import-plan`))
+    )
+      .then((plans) => {
+        if (cancelled) {
+          return;
+        }
+
+        const nextSelectedByVolume: Record<string, string[]> = {};
+        const nextSelectedTargets: Record<string, string> = {};
+        const nextAutoFolderNames: Record<string, string> = {};
+
+        for (const [index, plan] of plans.entries()) {
+          const targetFolder = autoFolderNames[plan.volumeId] ?? String(index + 1);
+          nextSelectedByVolume[plan.volumeId] = plan.entries.map((entry) => entry.sourcePath).sort();
+          nextAutoFolderNames[plan.volumeId] = targetFolder;
+          for (const entry of plan.entries) {
+            nextSelectedTargets[sourceKey(plan.volumeId, entry.sourcePath)] = targetFolder;
+          }
+        }
+
+        setSelectedByVolume((current) => ({
+          ...current,
+          ...nextSelectedByVolume
+        }));
+        setSelectedTargets((current) => {
+          const preservedManualEntries = Object.fromEntries(
+            Object.entries(current).filter(([key]) => {
+              const volumeId = key.split(":")[0];
+              return !selectedVolumeIds.includes(volumeId);
+            })
+          );
+          return {
+            ...preservedManualEntries,
+            ...nextSelectedTargets
+          };
+        });
+        setAutoFolderNames((current) => {
+          const next: Record<string, string> = {};
+          for (const volumeId of selectedVolumeIds) {
+            if (nextAutoFolderNames[volumeId]) {
+              next[volumeId] = nextAutoFolderNames[volumeId];
+            } else if (current[volumeId]) {
+              next[volumeId] = current[volumeId];
+            }
+          }
+          return next;
+        });
+        setProjectDirectories((current) => {
+          const next = new Set(current);
+          for (const folderName of Object.values(nextAutoFolderNames)) {
+            next.add(folderName);
+          }
+          return [...next].sort((left, right) => left.localeCompare(right));
+        });
+      })
+      .catch((requestError) => {
+        if (!cancelled) {
+          setError(requestError instanceof Error ? requestError.message : "Unable to build auto import pool.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [autoFolderNames, ingestMode, selectedVolumeIds]);
 
   const availableManagedRoots = useMemo<Array<{ value: BrowserRoot; label: string }>>(() => {
     const rootOptions: Array<{ value: BrowserRoot; label: string }> = [
@@ -1569,7 +1682,11 @@ export function App() {
                     <span>Target Folder</span>
                     <select
                       value={source.targetPath}
-                      onChange={(event) => assignTargetToSource(source.volumeId, source.sourcePath, event.target.value)}
+                      onChange={(event) =>
+                        ingestMode === "auto"
+                          ? assignTargetToVolume(source.volumeId, event.target.value)
+                          : assignTargetToSource(source.volumeId, source.sourcePath, event.target.value)
+                      }
                     >
                       {projectDirectories.map((directory) => (
                         <option key={`${sourceKey(source.volumeId, source.sourcePath)}:${directory}`} value={directory}>
@@ -1579,6 +1696,23 @@ export function App() {
                     </select>
                   </label>
                   <div className="pickerActions">
+                    {ingestMode === "auto" ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextName = window.prompt("Rename auto-import folder", source.targetPath)?.trim();
+                          if (!nextName) {
+                            return;
+                          }
+                          assignTargetToVolume(source.volumeId, nextName);
+                          setProjectDirectories((current) =>
+                            [...new Set([...current, nextName])].sort((left, right) => left.localeCompare(right))
+                          );
+                        }}
+                      >
+                        Rename Folder
+                      </button>
+                    ) : null}
                     <button className="dangerButton" onClick={() => removePooledSource(source.volumeId, source.sourcePath)}>
                       Remove
                     </button>
@@ -1672,6 +1806,9 @@ export function App() {
                           </button>
                           {entry.kind === "directory" ? (
                             <div className="rowActions">
+                              <button onClick={() => void renameManagedFolder(entry.relativePath)}>
+                                Rename Folder
+                              </button>
                               <button className="dangerButton" onClick={() => deleteManagedFolder(entry.relativePath)}>
                                 Delete Folder
                               </button>

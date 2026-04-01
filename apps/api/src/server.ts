@@ -6,7 +6,7 @@ import { browserRootSchema, ingestRequestSchema, slugifyProjectName } from "@wra
 import { config } from "./config.js";
 import { getDestinationSettings, hasSavedDestinationSettings, listMacDirectories, resetDestinationSettings, saveDestinationSettings } from "./destination-settings.js";
 import { getAppSettings, saveAppSettings } from "./app-settings.js";
-import { createManagedFolder, deleteManagedFolder, listManagedDirectories, listManagedFiles } from "./file-browser.js";
+import { createManagedFolder, deleteManagedFolder, listManagedDirectories, listManagedFiles, renameManagedFolder } from "./file-browser.js";
 import {
   addJobEvent,
   createInitialUser,
@@ -375,6 +375,33 @@ app.delete("/projects/:id/folders", async (request, response, next) => {
 
     await deleteManagedFolder(root, project.slug, relativePath);
     response.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/projects/:id/folders", async (request, response, next) => {
+  try {
+    const project = getProjectById(request.params.id);
+    if (!project) {
+      response.status(404).json({ error: "Project not found." });
+      return;
+    }
+
+    const root = browserRootSchema.parse(request.body?.root ?? "project");
+    const relativePath = String(request.body?.path ?? ".");
+    const nextName = String(request.body?.name ?? "").trim();
+    if (relativePath === ".") {
+      response.status(400).json({ error: "Cannot rename the project root." });
+      return;
+    }
+    if (!nextName) {
+      response.status(400).json({ error: "Folder name is required." });
+      return;
+    }
+
+    const renamedPath = await renameManagedFolder(root, project.slug, relativePath, nextName);
+    response.json({ path: renamedPath });
   } catch (error) {
     next(error);
   }

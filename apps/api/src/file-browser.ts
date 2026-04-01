@@ -46,6 +46,23 @@ export async function deleteManagedFolder(rootKey: BrowserRoot, projectSlug: str
   await fsp.rm(targetDirectory, { recursive: true, force: true });
 }
 
+export async function renameManagedFolder(
+  rootKey: BrowserRoot,
+  projectSlug: string,
+  relativePath: string,
+  nextName: string
+): Promise<string> {
+  const rootPath = getManagedRoot(rootKey, projectSlug);
+  const currentDirectory = assertInsideRoot(rootPath, path.join(rootPath, relativePath));
+  const parentRelativePath = path.dirname(relativePath);
+  const targetDirectory = assertInsideRoot(
+    rootPath,
+    path.join(rootPath, parentRelativePath === "." ? "" : parentRelativePath, nextName)
+  );
+  await fsp.rename(currentDirectory, targetDirectory);
+  return path.relative(rootPath, targetDirectory) || ".";
+}
+
 export async function listManagedDirectories(rootKey: BrowserRoot, projectSlug: string): Promise<string[]> {
   const rootPath = getManagedRoot(rootKey, projectSlug);
   await fsp.mkdir(rootPath, { recursive: true });
