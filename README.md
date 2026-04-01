@@ -4,7 +4,7 @@
 
 Wrangler is a Docker-based ingest system designed for production environments where data integrity matters.
 
-Cards come in. Files get selected. Wrangler handles structured ingest, dual backups, and checksum verification - automatically.
+Cards come in. Files get selected. Wrangler handles structured ingest, dual backups, and checksum verification automatically.
 
 ---
 
@@ -30,6 +30,9 @@ Wrangler removes that risk.
 * **Project-based ingest**
   Create structured project folders before copying begins
 
+* **Manual or automatic ingest**
+  Run ingest manually by creating a project, selecting your source, and pressing ingest, or enable automatic ingest to trigger as soon as new media is detected
+
 * **Selective file ingest**
   Choose exactly what gets copied
 
@@ -43,7 +46,7 @@ Wrangler removes that risk.
   Full visibility of ingest status and results
 
 * **Headless operation**
-  Runs independently of the UI, allowing ingest jobs to continue uninterrupted even if the browser is closed. Wrangler can run directly on the host machine or be operated from another device on the same network.
+  Runs independently of the UI, allowing ingest jobs to continue uninterrupted even if the browser is closed. Wrangler can run directly on the host machine or be operated from another device on the same network
 
 ---
 
@@ -106,11 +109,15 @@ cd apps/windows-host-helper
 dotnet run
 ```
 
+---
+
 ### Start system
 
 ```bash
 docker compose up --build
 ```
+
+---
 
 ### Open UI
 
@@ -118,7 +125,7 @@ docker compose up --build
 http://<your-machine-ip>:5173
 ```
 
-For external access through a reverse proxy or Cloudflare Tunnel, point the public hostname at the web service only. The web container now proxies `/api/*` to the API internally, so the app works behind a single public origin without exposing port `4001` separately.
+For external access through a reverse proxy or Cloudflare Tunnel, point the public hostname at the web service only. The web container proxies `/api/*` to the API internally, so the app works behind a single public origin without exposing port `4001`.
 
 ---
 
@@ -187,27 +194,3 @@ It’s built for:
 
 Plug in. Select. Ingest. Verified.
 
----
-
-## My honest take
-
-This is **very close to something you could package with Raconteur**.
-
-Especially with your:
-
-* climbing comps
-* live events
-* doco work
-
-You’re basically building:
-
-> “DIT-in-a-box for small crews”
-
-If you want next step, I’d go one of these:
-
-1. **Turn this into a landing page (like overlays)**
-2. **Add a UI concept for ingest progress (very sellable)**
-3. **Brand it under Raconteur Systems / Tools**
-4. **Add a “failure recovery” story (huge trust builder)**
-
-Happy to help push any of those.
