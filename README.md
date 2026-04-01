@@ -1,101 +1,211 @@
-# Wrangler
+# **Wrangler**
 
-Wrangler is a Dockerized media-ingest app for macOS and Windows hosts. A small host-side helper detects mounted SD cards, the web app lets an operator create a project and select source files, and a background worker copies the selection into the project folder and then out to two destinations with checksum verification.
+**Reliable media ingest. Built for real workflows.**
 
-## AI Disclaimer
+Wrangler is a Docker-based ingest system designed for production environments where data integrity matters.
 
-This project was developed with AI assistance and primarily tested on macOS. All code, configuration, and operational behavior should be reviewed and tested by a human before production use, especially around file operations, data integrity, path handling, and platform-specific host integration. Windows helper support has been added, but Windows-specific workflows and features have not yet been fully verified end-to-end.
+Cards come in. Files get selected. Wrangler handles structured ingest, dual backups, and checksum verification - automatically.
 
-## Services
+---
 
-- `apps/api`: Express API backed by SQLite for projects, jobs, events, and checksum records.
-- `apps/web`: React web UI for project creation, source selection, and job monitoring.
-- `apps/host-helper`: macOS-only helper that scans `/Volumes` and enriches mounted volumes with `diskutil` metadata.
-- `apps/windows-host-helper`: native Windows helper that exposes removable drive metadata over the same `/volumes` HTTP contract.
-- `packages/shared`: shared schemas and types.
+## **Why Wrangler Exists**
 
-## Storage Flow
+Ingest is one of the highest-risk parts of a shoot.
 
-1. Source volume appears on the host under `/Volumes` on macOS or as a removable drive letter on Windows.
-2. The host helper exposes mounted-volume metadata over HTTP.
-3. The API creates a project under `PROJECTS_ROOT`.
-4. The worker copies selected files from the source volume into the project folder.
-5. The worker computes SHA-256 checksums for the project copy.
-6. The worker mirrors the project folder into destination A and destination B.
-7. The worker verifies both destinations against the project manifest and records the results in SQLite.
+Manual copies fail. Drag-and-drop gets messy. Verifying footage is slow or skipped entirely.
 
-## Requirements
+Wrangler removes that risk.
 
-- `Node.js` 20+ recommended
-- `npm` 10+ recommended
-- `Docker Desktop`
-- macOS helper: `diskutil` available on the host
-- Windows helper: `.NET 8 SDK`
+* Every file is tracked
+* Every copy is verified
+* Every job is repeatable
 
-## Dependencies
+---
 
-- Runtime/workspace:
-  - `express`
-  - `react`
-  - `vite`
-  - `better-sqlite3`
-  - `zod`
-  - `sharp`
-  - `ffmpeg` in the API container for video thumbnails
-- Windows host helper:
-  - `System.Management`
-- Development/build:
-  - `typescript`
-  - `tsx`
-  - `@types/*` packages used by the workspaces
+## **Core Features**
 
-## Installation
+* **Automatic media detection**
+  Detects mounted cards via a host-side helper
 
-1. Clone the repository.
-2. Create your environment file:
+* **Project-based ingest**
+  Create structured project folders before copying begins
+
+* **Selective file ingest**
+  Choose exactly what gets copied
+
+* **Multi-destination backup**
+  Automatically mirrors to multiple locations
+
+* **Checksum verification**
+  SHA-256 verification across all copies
+
+* **Job tracking**
+  Full visibility of ingest status and results
+
+*  * **Headless operation**
+  Runs independently of the UI, allowing ingest jobs to continue uninterrupted even if the browser is closed. Wrangler can run directly on the host machine or be operated from another device on the same network.
+
+---
+
+## **How It Works**
+
+1. Insert media
+2. Wrangler detects the volume
+3. Create a project in the web UI
+4. Select files
+5. Wrangler copies to a project folder
+6. Wrangler mirrors to destination A and B
+7. Wrangler verifies all copies
+
+Simple on the surface. Solid underneath.
+
+---
+
+## **Architecture**
+
+Wrangler is built as a set of small services:
+
+* **API** (`apps/api`)
+  Express + SQLite backend managing projects, jobs, and checksums
+
+* **Web UI** (`apps/web`)
+  React interface for ingest control and monitoring
+
+* **Host Helper (macOS)** (`apps/host-helper`)
+  Detects volumes via `/Volumes` and `diskutil`
+
+* **Host Helper (Windows)** (`apps/windows-host-helper`)
+  Native .NET helper exposing removable drives
+
+* **Shared Package** (`packages/shared`)
+  Shared types and schemas
+
+---
+
+## **Quick Start**
 
 ```bash
+git clone https://github.com/Joshuaeal/wrangler
+cd wrangler
 cp .env.example .env
-```
-
-3. Install JavaScript dependencies:
-
-```bash
 npm install
 ```
 
-4. Review `.env` and adjust host-mounted roots, destination paths, and ports if needed.
+### Start host helper
 
-## Local Setup
-
-1. Start the helper that matches your host OS:
+macOS:
 
 ```bash
 npm run dev -w @wrangler/host-helper
 ```
 
-On Windows, run the native helper instead:
+Windows:
 
 ```bash
 cd apps/windows-host-helper
 dotnet run
 ```
 
-2. Start the Docker services:
+### Start system
 
 ```bash
 docker compose up --build
 ```
 
-3. Open the web UI at `http://<mac-hostname-or-ip>:5173`.
+### Open UI
 
-The API is served on port `4001`, and the worker runs as a separate background container process.
+```
+http://<your-machine-ip>:5173
+```
 
-## Notes
+---
 
-- SD-card detection happens outside the containers via a host-side helper.
-- The API and worker mount `/Users` so you can choose Mac-local destination folders from the web UI.
-- Source volumes are mounted read-only into the containers by default.
-- The web app derives the API host from the current browser hostname so it can be opened from another machine on the LAN.
-- The current implementation uses a SQLite database file at `DATABASE_PATH`.
-# wrangler
+## **Requirements**
+
+* Node.js 20+
+* npm 10+
+* Docker Desktop
+
+Platform-specific:
+
+* macOS: `diskutil`
+* Windows: .NET 8 SDK
+
+---
+
+## **Important Notes**
+
+* Source media is mounted read-only
+* `/Users` is mounted into containers for destination selection
+* SQLite database stored at `DATABASE_PATH`
+* API runs on `4001`, UI on `5173`
+* Designed for LAN access across multiple machines
+
+---
+
+## **AI Disclaimer**
+
+Wrangler has been developed with AI assistance and primarily tested on macOS.
+
+Before production use, review and validate:
+
+* file operations
+* data integrity
+* path handling
+* platform-specific behaviour
+
+Windows support exists but is not yet fully validated end-to-end.
+
+---
+
+## **Where This Is Going (optional but strong)**
+
+Wrangler is evolving toward a full ingest system for small-to-mid production teams.
+
+Planned directions:
+
+* Watch-folder automation
+* Camera card presets
+* Proxy generation
+* Cloud sync workflows
+* Multi-operator ingest
+
+---
+
+## **Positioning (keep or remove depending on audience)**
+
+Wrangler is for crews who don’t want ingest to be a liability.
+
+It’s built for:
+
+* DITs
+* videographers
+* small production teams
+* live and event environments
+
+Plug in. Select. Ingest. Verified.
+
+---
+
+## My honest take
+
+This is **very close to something you could package with Raconteur**.
+
+Especially with your:
+
+* climbing comps
+* live events
+* doco work
+
+You’re basically building:
+
+> “DIT-in-a-box for small crews”
+
+If you want next step, I’d go one of these:
+
+1. **Turn this into a landing page (like overlays)**
+2. **Add a UI concept for ingest progress (very sellable)**
+3. **Brand it under Raconteur Systems / Tools**
+4. **Add a “failure recovery” story (huge trust builder)**
+
+Happy to help push any of those.
