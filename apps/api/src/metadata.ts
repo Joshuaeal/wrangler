@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import type { Volume } from "@wrangler/shared";
@@ -29,10 +30,19 @@ export type SourceMetadata = {
   shutterSpeed: string | null;
   whiteBalance: string | null;
   aperture: string | null;
+  cameraSerialNumber: string | null;
+  firmwareVersion: string | null;
+  focalLength: string | null;
+  scene: string | null;
+  take: string | null;
   raw: Record<string, string | number | null>;
 };
 
-export async function readVolumeMetadata(volume: Volume, relativePath: string): Promise<SourceMetadata> {
+export async function readVolumeMetadata(
+  volume: Volume,
+  relativePath: string,
+  options?: { advanced?: boolean }
+): Promise<SourceMetadata> {
   const root = assertInsideRoot(config.sourceRoot, volume.mountPath);
   const absolutePath = assertInsideRoot(root, path.join(root, relativePath));
   const [exif, ffprobe] = await Promise.all([
@@ -68,8 +78,30 @@ export async function readVolumeMetadata(volume: Volume, relativePath: string): 
     shutterSpeed: pickString(exif, ["ShutterSpeed", "ShutterAngle"]),
     whiteBalance: pickString(exif, ["WhiteBalance", "WhiteBalanceFineTune"]),
     aperture: pickString(exif, ["Aperture", "FNumber"]),
-    raw: buildWranglerMetadata(exif)
+    cameraSerialNumber: options?.advanced ? pickString(exif, ["SerialNumber", "CameraSerialNumber", "InternalSerialNumber"]) : null,
+    firmwareVersion: options?.advanced ? pickString(exif, ["FirmwareVersion", "SoftwareVersion"]) : null,
+    focalLength: options?.advanced ? pickString(exif, ["FocalLength", "FocalLengthIn35mmFormat"]) : null,
+    scene: options?.advanced ? pickString(exif, ["Scene", "SceneNumber"]) : null,
+    take: options?.advanced ? pickString(exif, ["Take", "TakeNumber"]) : null,
+    raw: buildWranglerMetadata(exif, options?.advanced ?? false)
   };
+}
+
+export async function suggestAutoImportFolderName(volume: Volume, fallbackLabel: string): Promise<string> {
+  const representativePath = await findRepresentativeMediaPath(volume);
+  if (!representativePath) {
+    return fallbackLabel;
+  }
+
+  try {
+    const metadata = await readVolumeMetadata(volume, representativePath);
+    const suggestion = [metadata.cameraMake, metadata.cameraModel, metadata.reelName, metadata.scene]
+      .filter(Boolean)
+      .join(" ");
+    return sanitizeFolderName(suggestion || fallbackLabel);
+  } catch {
+    return fallbackLabel;
+  }
 }
 
 async function runExiftool(filePath: string): Promise<Record<string, unknown>> {
@@ -142,6 +174,42 @@ async function runCommand(command: string, args: string[]): Promise<string> {
   });
 }
 
+async function findRepresentativeMediaPath(volume: Volume, relativePath = "."): Promise<string | null> {
+  const root = assertInsideRoot(config.sourceRoot, volume.mountPath);
+  const directory = assertInsideRoot(root, path.join(root, relativePath));
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (entry.name.startsWith(".") || entry.name.startsWith("._")) {
+      continue;
+    }
+
+    const nextRelativePath = relativePath === "." ? entry.name : path.posix.join(relativePath, entry.name);
+    const absolutePath = path.join(directory, entry.name);
+
+    if (entry.isFile()) {
+      const extension = path.extname(entry.name).toLowerCase();
+      if (mediaExtensions.has(extension)) {
+        return nextRelativePath;
+      }
+      continue;
+    }
+
+    if (entry.isDirectory()) {
+      try {
+        const nested = await findRepresentativeMediaPath(volume, nextRelativePath);
+        if (nested) {
+          return nested;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return null;
+}
+
 function pickString(input: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
     const value = input[key];
@@ -187,7 +255,7 @@ function pickFrameRate(frameRate: string | undefined): number | null {
   return numerator / denominator;
 }
 
-function buildWranglerMetadata(input: Record<string, unknown>): Record<string, string | number | null> {
+function buildWranglerMetadata(input: Record<string, unknown>, advanced: boolean): Record<string, string | number | null> {
   const keys = [
     "Make",
     "Model",
@@ -204,11 +272,59 @@ function buildWranglerMetadata(input: Record<string, unknown>): Record<string, s
     "WhiteBalance",
     "Aperture"
   ];
+  const advancedKeys = [
+    "SerialNumber",
+    "CameraSerialNumber",
+    "FirmwareVersion",
+    "SoftwareVersion",
+    "FocalLength",
+    "Scene",
+    "SceneNumber",
+    "Take",
+    "TakeNumber"
+  ];
+  const selectedKeys = advanced ? [...keys, ...advancedKeys] : keys;
 
   return Object.fromEntries(
-    keys.map((key) => {
+    selectedKeys.map((key) => {
       const value = input[key];
       return [key, typeof value === "string" || typeof value === "number" ? value : null];
     })
   );
 }
+
+function sanitizeFolderName(value: string): string {
+  return value
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80) || "Card";
+}
+
+const mediaExtensions = new Set([
+  ".3gp",
+  ".arw",
+  ".avi",
+  ".braw",
+  ".crm",
+  ".cr2",
+  ".cr3",
+  ".dng",
+  ".heic",
+  ".heif",
+  ".jpeg",
+  ".jpg",
+  ".m4v",
+  ".mkv",
+  ".mov",
+  ".mp4",
+  ".mxf",
+  ".nef",
+  ".orf",
+  ".png",
+  ".r3d",
+  ".raf",
+  ".rw2",
+  ".wav",
+  ".webm"
+]);

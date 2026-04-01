@@ -5,6 +5,7 @@ import path from "node:path";
 import { browserRootSchema, ingestRequestSchema, slugifyProjectName } from "@wrangler/shared";
 import { config } from "./config.js";
 import { getDestinationSettings, hasSavedDestinationSettings, listMacDirectories, resetDestinationSettings, saveDestinationSettings } from "./destination-settings.js";
+import { getAppSettings, saveAppSettings } from "./app-settings.js";
 import { createManagedFolder, deleteManagedFolder, listManagedDirectories, listManagedFiles } from "./file-browser.js";
 import {
   addJobEvent,
@@ -28,7 +29,7 @@ import {
 } from "./db.js";
 import { ensureDirectories, assertInsideRoot } from "./paths.js";
 import { buildVolumeThumbnail } from "./thumbnails.js";
-import { readVolumeMetadata } from "./metadata.js";
+import { readVolumeMetadata, suggestAutoImportFolderName } from "./metadata.js";
 import { getVolumeOrThrow, listManyVolumeFiles, listVolumeFiles, listVolumes } from "./volume-service.js";
 
 ensureDirectories();
@@ -49,6 +50,25 @@ app.get("/auth/status", (request, response) => {
     isAuthenticated: Boolean(user),
     username: user?.username ?? null
   });
+});
+
+app.get("/settings", (_request, response) => {
+  response.json(getAppSettings());
+});
+
+app.put("/settings", async (request, response, next) => {
+  try {
+    response.json(
+      await saveAppSettings({
+        advancedMetadataEnabled:
+          typeof request.body?.advancedMetadataEnabled === "boolean"
+            ? request.body.advancedMetadataEnabled
+            : undefined
+      })
+    );
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/auth/setup", (request, response, next) => {
@@ -157,7 +177,25 @@ app.get("/volumes/:id/metadata", async (request, response, next) => {
   try {
     const volume = await getVolumeOrThrow(request.params.id);
     const relativePath = typeof request.query.path === "string" ? request.query.path : ".";
-    response.json(await readVolumeMetadata(volume, relativePath));
+    const settings = getAppSettings();
+    response.json(await readVolumeMetadata(volume, relativePath, { advanced: settings.advancedMetadataEnabled }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/volumes/:id/auto-import-plan", async (request, response, next) => {
+  try {
+    const volume = await getVolumeOrThrow(request.params.id);
+    const fallbackIndex = Math.max(1, Number(request.query.index ?? 1));
+    const entries = await listVolumeFiles(volume, ".");
+    response.json({
+      volumeId: volume.id,
+      suggestedFolderName: await suggestAutoImportFolderName(volume, `Card ${fallbackIndex}`),
+      entries: entries.map((entry) => ({
+        sourcePath: entry.relativePath
+      }))
+    });
   } catch (error) {
     next(error);
   }

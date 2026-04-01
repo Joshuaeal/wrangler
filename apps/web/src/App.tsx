@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { BrowserRoot, FileEntry, Job, Project, SelectedSourceItem, Volume } from "@wrangler/shared";
 import wranglerLogo from "./assets/wrangler-logo-alpha.png";
 import raconteurLogo from "./assets/raconteur-logo-alpha.png";
@@ -29,6 +29,18 @@ type AuthStatus = {
   requiresSetup: boolean;
   isAuthenticated: boolean;
   username: string | null;
+};
+
+type AppSettings = {
+  advancedMetadataEnabled: boolean;
+};
+
+type IngestMode = "manual" | "auto";
+
+type AutoImportPlan = {
+  volumeId: string;
+  suggestedFolderName: string;
+  entries: Array<{ sourcePath: string }>;
 };
 
 type MacDirectoryEntry = {
@@ -102,6 +114,11 @@ type SourceMetadata = {
   shutterSpeed: string | null;
   whiteBalance: string | null;
   aperture: string | null;
+  cameraSerialNumber: string | null;
+  firmwareVersion: string | null;
+  focalLength: string | null;
+  scene: string | null;
+  take: string | null;
   raw: Record<string, string | number | null>;
 };
 
@@ -256,10 +273,13 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [setupUsername, setSetupUsername] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
+  const [setupAdvancedMetadata, setSetupAdvancedMetadata] = useState(false);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [showSettings, setShowSettings] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings>({ advancedMetadataEnabled: false });
+  const [ingestMode, setIngestMode] = useState<IngestMode>("manual");
   const [volumes, setVolumes] = useState<Volume[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -292,6 +312,8 @@ export function App() {
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [sourceMetadataLoading, setSourceMetadataLoading] = useState(false);
   const [sourceFavorites, setSourceFavorites] = useState<SourceFavorite[]>([]);
+  const finderColumnsRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const sourcePaneRefs = useRef<Record<string, HTMLElement | null>>({});
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem("wrangler-theme");
@@ -376,17 +398,19 @@ export function App() {
 
   async function refreshAll() {
     try {
-      const [nextVolumes, nextProjects, nextJobs, nextDestinations] = await Promise.all([
+      const [nextVolumes, nextProjects, nextJobs, nextDestinations, nextAppSettings] = await Promise.all([
         requestJson<Volume[]>("/volumes"),
         requestJson<Project[]>("/projects"),
         requestJson<Job[]>("/jobs"),
-        requestJson<DestinationSettingsResponse>("/destinations")
+        requestJson<DestinationSettingsResponse>("/destinations"),
+        requestJson<AppSettings>("/settings")
       ]);
 
       setVolumes(nextVolumes);
       setProjects(nextProjects);
       setJobs(nextJobs);
       setDestinations(nextDestinations);
+      setAppSettings(nextAppSettings);
       setDestinationsConfigured(nextDestinations.isConfigured);
       setDraftDestinations((current) => current ?? nextDestinations);
       if (!selectedProjectId && nextProjects[0]) {
@@ -449,6 +473,57 @@ export function App() {
         .join("|"),
     [volumePanes]
   );
+
+  useLayoutEffect(() => {
+    const frameHandles: number[] = [];
+    const timeoutHandles: number[] = [];
+
+    const forceScrollRight = (container: HTMLDivElement) => {
+      const lastColumn = container.lastElementChild as HTMLElement | null;
+      if (lastColumn) {
+        lastColumn.scrollIntoView({ block: "nearest", inline: "end" });
+      }
+      container.scrollLeft = container.scrollWidth;
+    };
+
+    for (const pane of Object.values(volumePanes)) {
+      const paneElement = sourcePaneRefs.current[pane.volume.id];
+      const container = finderColumnsRefs.current[pane.volume.id];
+      paneElement?.scrollIntoView({ block: "start", inline: "nearest" });
+      if (!container) {
+        continue;
+      }
+
+      container.scrollTop = 0;
+      forceScrollRight(container);
+
+      const firstFrame = window.requestAnimationFrame(() => {
+        container.scrollTop = 0;
+        forceScrollRight(container);
+        const secondFrame = window.requestAnimationFrame(() => {
+          forceScrollRight(container);
+        });
+        frameHandles.push(secondFrame);
+      });
+      frameHandles.push(firstFrame);
+
+      timeoutHandles.push(
+        window.setTimeout(() => {
+          container.scrollTop = 0;
+          forceScrollRight(container);
+        }, 40)
+      );
+    }
+
+    return () => {
+      for (const handle of frameHandles) {
+        window.cancelAnimationFrame(handle);
+      }
+      for (const handle of timeoutHandles) {
+        window.clearTimeout(handle);
+      }
+    };
+  }, [volumePaneKeys]);
 
   useEffect(() => {
     for (const pane of Object.values(volumePanes)) {
@@ -543,6 +618,11 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ username: setupUsername, password: setupPassword })
       });
+      const savedSettings = await requestJson<AppSettings>("/settings", {
+        method: "PUT",
+        body: JSON.stringify({ advancedMetadataEnabled: setupAdvancedMetadata })
+      });
+      setAppSettings(savedSettings);
       setSetupPassword("");
       setLoginPassword("");
       await refreshAuthStatus();
@@ -581,6 +661,18 @@ export function App() {
     }
   }
 
+  async function persistAppSettings(nextSettings: Partial<AppSettings>) {
+    try {
+      const saved = await requestJson<AppSettings>("/settings", {
+        method: "PUT",
+        body: JSON.stringify(nextSettings)
+      });
+      setAppSettings(saved);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to save settings.");
+    }
+  }
+
   async function clearProjects() {
     const confirmed = window.confirm("Clear all projects and related job history? This will remove project records and project folders.");
     if (!confirmed) {
@@ -609,11 +701,12 @@ export function App() {
     }
 
     try {
+      const sources = ingestMode === "auto" ? await buildAutoSourcePayload() : buildSourcePayload();
       const job = await requestJson<Job>("/jobs", {
         method: "POST",
         body: JSON.stringify({
           projectId: selectedProjectId,
-          sources: buildSourcePayload()
+          sources
         })
       });
 
@@ -869,15 +962,40 @@ export function App() {
       .filter((source) => source.entries.length > 0);
   }
 
+  async function buildAutoSourcePayload(): Promise<Array<{ volumeId: string; sourceRoot: string; entries: SelectedSourceItem[] }>> {
+    const plans = await Promise.all(
+      selectedVolumeIds.map((volumeId, index) =>
+        requestJson<AutoImportPlan>(`/volumes/${volumeId}/auto-import-plan?index=${index + 1}`)
+      )
+    );
+
+    const usedNames = new Map<string, number>();
+    return plans.map((plan, index) => {
+      const baseName = (plan.suggestedFolderName || `Card ${index + 1}`).trim();
+      const seenCount = usedNames.get(baseName) ?? 0;
+      usedNames.set(baseName, seenCount + 1);
+      const targetFolder = seenCount === 0 ? baseName : `${baseName} ${seenCount + 1}`;
+
+      return {
+        volumeId: plan.volumeId,
+        sourceRoot: "",
+        entries: plan.entries.map((entry) => ({
+          sourcePath: entry.sourcePath,
+          targetPath: targetFolder
+        }))
+      };
+    });
+  }
+
   const canStart = useMemo(
     () =>
       Boolean(
         destinationsConfigured &&
         selectedProjectId &&
         selectedVolumeIds.length > 0 &&
-        selectedVolumeIds.some((volumeId) => (selectedByVolume[volumeId] ?? []).length > 0)
+        (ingestMode === "auto" || selectedVolumeIds.some((volumeId) => (selectedByVolume[volumeId] ?? []).length > 0))
       ),
-    [destinationsConfigured, selectedByVolume, selectedProjectId, selectedVolumeIds]
+    [destinationsConfigured, ingestMode, selectedByVolume, selectedProjectId, selectedVolumeIds]
   );
 
   const managedPathChain = useMemo(() => getPathChain(managedPath), [managedPath]);
@@ -1018,6 +1136,16 @@ export function App() {
                 placeholder={isSetup ? "Minimum 8 characters" : "Password"}
               />
             </label>
+            {isSetup ? (
+              <label className={`authCheckbox ${setupAdvancedMetadata ? "authCheckboxSelected" : ""}`}>
+                <input
+                  type="checkbox"
+                  checked={setupAdvancedMetadata}
+                  onChange={(event) => setSetupAdvancedMetadata(event.target.checked)}
+                />
+                <span>Enable advanced camera metadata parsing on this install</span>
+              </label>
+            ) : null}
             <div className="pickerActions">
               <button
                 type="button"
@@ -1058,6 +1186,27 @@ export function App() {
           <h2>Projects</h2>
           <div className="stack">
             <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="New project name" />
+            <div className="modeTabs" role="tablist" aria-label="Ingest mode">
+              <button
+                type="button"
+                className={`modeTab ${ingestMode === "manual" ? "modeTabActive" : ""}`}
+                onClick={() => setIngestMode("manual")}
+              >
+                Manual
+              </button>
+              <button
+                type="button"
+                className={`modeTab ${ingestMode === "auto" ? "modeTabActive" : ""}`}
+                onClick={() => setIngestMode("auto")}
+              >
+                Auto
+              </button>
+            </div>
+            <div className="muted">
+              {ingestMode === "manual"
+                ? "Manual mode lets you pick files and folders into the source pool."
+                : "Auto mode imports all visible files from each selected card into separate folders in the project."}
+            </div>
             <div className="pickerActions">
               <button onClick={createProject} disabled={!projectName.trim() || !destinationsConfigured}>
                 Create Project
@@ -1104,7 +1253,7 @@ export function App() {
       </section>
 
       <section className="workflowSection">
-        <article className="panel fixedPanel sourceBrowserPanel">
+        <article className="panel sourceBrowserPanel">
           <div className="sectionTitleRow">
             <h2>Source Browser</h2>
             <span className="infoHint" data-tooltip="Browse each selected source volume, add files or folders into the pool, and click previewable media to inspect it.">
@@ -1115,7 +1264,13 @@ export function App() {
             <div className="sourceBrowserScroller">
               <div className="browserGrid">
               {Object.values(volumePanes).map((pane) => (
-                <article key={pane.volume.id} className="subPanel">
+                <article
+                  key={pane.volume.id}
+                  className="subPanel"
+                  ref={(element) => {
+                    sourcePaneRefs.current[pane.volume.id] = element;
+                  }}
+                >
                   <h3>{pane.volume.name}</h3>
                   <div className="muted">{pane.volume.mountPath}</div>
                   <div className="paneToolbar">
@@ -1151,7 +1306,12 @@ export function App() {
                         ))}
                     </div>
                   ) : null}
-                  <div className="finderColumns">
+                  <div
+                    className="finderColumns"
+                    ref={(element) => {
+                      finderColumnsRefs.current[pane.volume.id] = element;
+                    }}
+                  >
                     {getPathChain(pane.path).map((pathEntry) => (
                       <div key={`${pane.volume.id}:${pathEntry}`} className="finderColumn">
                         <div className="finderColumnHeader">
@@ -1194,6 +1354,21 @@ export function App() {
                                   <span>{file.relativePath.split("/").pop() ?? file.relativePath}</span>
                                   <small>{file.kind === "directory" ? "folder" : formatFileSize(file.size)}</small>
                                 </button>
+                                {file.kind === "directory" ? (
+                                  <div className="rowActions">
+                                    <button
+                                      type="button"
+                                      className="sourceFavoriteInlineButton"
+                                      onClick={() => toggleSourceFavorite(pane.volume.id, pane.volume.name, file.relativePath)}
+                                    >
+                                      {sourceFavorites.some(
+                                        (favorite) => favorite.volumeId === pane.volume.id && favorite.path === file.relativePath
+                                      )
+                                        ? "Unfavorite"
+                                        : "Favorite"}
+                                    </button>
+                                  </div>
+                                ) : null}
                               </li>
                             );
                           })}
@@ -1315,6 +1490,29 @@ export function App() {
                         <div>
                           <dt>Color</dt>
                           <dd>{[sourceMetadata.colorSpace, sourceMetadata.gamma].filter(Boolean).join(" • ")}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.cameraSerialNumber || sourceMetadata?.firmwareVersion || sourceMetadata?.focalLength ? (
+                        <div>
+                          <dt>Camera Info</dt>
+                          <dd>
+                            {[
+                              sourceMetadata.cameraSerialNumber ? `Serial ${sourceMetadata.cameraSerialNumber}` : null,
+                              sourceMetadata.firmwareVersion ? `FW ${sourceMetadata.firmwareVersion}` : null,
+                              sourceMetadata.focalLength ? `Focal ${sourceMetadata.focalLength}` : null
+                            ].filter(Boolean).join(" • ")}
+                          </dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.scene || sourceMetadata?.take ? (
+                        <div>
+                          <dt>Slate</dt>
+                          <dd>
+                            {[
+                              sourceMetadata.scene ? `Scene ${sourceMetadata.scene}` : null,
+                              sourceMetadata.take ? `Take ${sourceMetadata.take}` : null
+                            ].filter(Boolean).join(" • ")}
+                          </dd>
                         </div>
                       ) : null}
                       {sourceMetadata?.iso || sourceMetadata?.whiteBalance || sourceMetadata?.shutterSpeed || sourceMetadata?.aperture ? (
@@ -1600,6 +1798,17 @@ export function App() {
                   <option value="dark">Dark</option>
                   <option value="light">Light</option>
                 </select>
+              </div>
+              <div className="destinationRow">
+                <strong>Metadata Parsing</strong>
+                <label className={`authCheckbox ${appSettings.advancedMetadataEnabled ? "authCheckboxSelected" : ""}`}>
+                  <input
+                    type="checkbox"
+                    checked={appSettings.advancedMetadataEnabled}
+                    onChange={(event) => void persistAppSettings({ advancedMetadataEnabled: event.target.checked })}
+                  />
+                  <span>Enable advanced camera metadata fields</span>
+                </label>
               </div>
               <div className="destinationRow">
                 <strong>Detailed Logs</strong>
