@@ -445,7 +445,7 @@ app.post("/system/shutdown", async (_request, response, next) => {
 
     if (!shutdownResponse.ok) {
       const body = await shutdownResponse.json().catch(() => ({}));
-      throw new Error(body.error ?? "Unable to shut down Wrangler.");
+      throw new Error(body.error ?? "Unable to stop Wrangler.");
     }
 
     response.status(202).send();

@@ -266,9 +266,9 @@ select {
 .infoHint::after {
   content: attr(data-tooltip);
   position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
-  width: min(280px, 60vw);
+  top: 50%;
+  left: calc(100% + 10px);
+  width: min(260px, calc(100vw - 64px));
   padding: 10px 12px;
   border-radius: 10px;
   background: rgba(8, 6, 6, 0.96);
@@ -278,14 +278,14 @@ select {
   line-height: 1.4;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(-4px);
+  transform: translate(4px, -50%);
   transition: opacity 140ms ease, transform 140ms ease;
   z-index: 40;
 }
 
 .infoHint:hover::after {
   opacity: 1;
-  transform: translateY(0);
+  transform: translate(0, -50%);
 }
 
 .workflowSection {

@@ -1,6 +1,5 @@
-using System.Management;
 using System.Diagnostics;
-
+using System.Management;
 var builder = WebApplication.CreateBuilder(args);
 
 var port = builder.Configuration["HOST_HELPER_PORT"] ?? "4100";
@@ -23,17 +22,29 @@ app.MapGet("/volumes", () =>
     return Results.Json(volumes);
 });
 
-app.MapPost("/shutdown", async (HttpRequest request) =>
+app.MapPost("/shutdown", (HttpRequest request) =>
 {
     if (!string.Equals(request.Headers["x-wrangler-control-token"], controlToken, StringComparison.Ordinal))
     {
         return Results.Json(new { error = "Forbidden." }, statusCode: 403);
     }
 
+    var process = new Process
+    {
+        StartInfo = new ProcessStartInfo
+        {
+            FileName = "node",
+            Arguments = "scripts/stop-wrangler.mjs",
+            WorkingDirectory = projectRoot,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        }
+    };
+
+    process.Start();
     _ = Task.Run(async () =>
     {
         await Task.Delay(100);
-        await ShutdownWranglerAsync(projectRoot);
         Environment.Exit(0);
     });
 
@@ -150,26 +161,6 @@ static T? SafeGet<T>(Func<T> getter)
 static long? TryParseLong(object? value)
 {
     return value is null ? null : long.TryParse(value.ToString(), out var parsed) ? parsed : null;
-}
-
-static async Task ShutdownWranglerAsync(string projectRoot)
-{
-    var process = new Process
-    {
-        StartInfo = new ProcessStartInfo
-        {
-            FileName = "docker",
-            Arguments = "compose down",
-            WorkingDirectory = projectRoot,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        }
-    };
-
-    process.Start();
-    await process.WaitForExitAsync();
 }
 
 internal sealed record VolumeMetadata(

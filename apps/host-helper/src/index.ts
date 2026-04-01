@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import express from "express";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import process from "node:process";
 
@@ -58,11 +58,19 @@ app.post("/shutdown", async (request, response, next) => {
       return;
     }
 
-    response.status(202).json({ ok: true });
+    const child = spawn(process.execPath, ["scripts/stop-wrangler.mjs"], {
+      cwd: projectRoot,
+      detached: true,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        WRANGLER_PROJECT_ROOT: projectRoot
+      }
+    });
+    child.unref();
 
-    setTimeout(() => {
-      void shutdownWrangler();
-    }, 100);
+    response.status(202).json({ ok: true });
+    setTimeout(() => process.exit(0), 100);
   } catch (error) {
     next(error);
   }
@@ -164,10 +172,3 @@ function matchBoolean(plist: string, key: string): boolean | null {
   return null;
 }
 
-async function shutdownWrangler(): Promise<void> {
-  try {
-    await execFileAsync("docker", ["compose", "down"], { cwd: projectRoot });
-  } finally {
-    process.exit(0);
-  }
-}

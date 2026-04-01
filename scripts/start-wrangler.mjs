@@ -22,7 +22,7 @@ await runCommand("docker", ["compose", "up", "-d", "--build"], { cwd: projectRoo
 
 console.log("Wrangler is running in the background.");
 console.log("Open http://localhost:5173 or your machine IP in a browser.");
-console.log("Use Settings -> Shut Down Wrangler when you want to stop it.");
+console.log("Use Settings -> Stop Wrangler to stop only Wrangler services later.");
 
 async function isHostHelperHealthy() {
   try {

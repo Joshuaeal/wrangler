@@ -854,7 +854,7 @@ export function App() {
       await requestJson<void>("/system/shutdown", { method: "POST" });
       setShowSettings(false);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to shut down Wrangler.");
+      setError(requestError instanceof Error ? requestError.message : "Unable to stop Wrangler.");
     }
   }
 
@@ -2321,6 +2321,33 @@ export function App() {
                 </div>
               ) : null}
               <div className="destinationRow">
+                <div className="sectionTitleRow">
+                  <strong>Stop Wrangler</strong>
+                  <span
+                    className="infoHint"
+                    data-tooltip="This only stops Wrangler services by bringing the Docker stack down and exiting the helper. It does not shut down the computer."
+                  >
+                    ?
+                  </span>
+                </div>
+                <div className="pickerActions">
+                  <button
+                    type="button"
+                    className="dangerButton"
+                    onClick={() =>
+                      setConfirmDialog({
+                        kind: "shutdown",
+                        title: "Stop Wrangler",
+                        message: "Stop Wrangler services for this instance by bringing the Docker stack down and closing the helper?",
+                        confirmLabel: "Stop Wrangler"
+                      })
+                    }
+                  >
+                    Stop Wrangler
+                  </button>
+                </div>
+              </div>
+              <div className="destinationRow">
                 <strong>Reset To Defaults</strong>
                 <div className="authField">
                   <label htmlFor="reset-password-input">Confirm Password</label>
@@ -2340,33 +2367,6 @@ export function App() {
                     disabled={!resetPassword.trim()}
                   >
                     Reset To Defaults
-                  </button>
-                </div>
-              </div>
-              <div className="destinationRow">
-                <div className="sectionTitleRow">
-                  <strong>Shut Down Wrangler</strong>
-                  <span
-                    className="infoHint"
-                    data-tooltip="When Wrangler is started with the single launch command it keeps running after the terminal closes. Use this to stop the host helper and Docker stack cleanly from the UI."
-                  >
-                    ?
-                  </span>
-                </div>
-                <div className="pickerActions">
-                  <button
-                    type="button"
-                    className="dangerButton"
-                    onClick={() =>
-                      setConfirmDialog({
-                        kind: "shutdown",
-                        title: "Shut Down Wrangler",
-                        message: "Stop the background host helper and bring the Docker stack down for this instance?",
-                        confirmLabel: "Shut Down Wrangler"
-                      })
-                    }
-                  >
-                    Shut Down Wrangler
                   </button>
                 </div>
               </div>
@@ -2618,7 +2618,7 @@ export function App() {
                 <strong>Startup</strong>
                 <span
                   className="infoHint"
-                  data-tooltip="Use npm run launch from the project root to start the host helper and Docker stack together in the background. After that you can close the terminal and shut Wrangler down later from Settings on macOS or Windows."
+                  data-tooltip="Use npm run launch from the project root to start the host helper and Docker stack together in the background. After that you can close the terminal. You can later stop only Wrangler services from Settings."
                 >
                   ?
                 </span>

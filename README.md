@@ -164,10 +164,10 @@ Wrangler can then be accessed from any device on your local network.
 
 ## **Stopping Wrangler**
 
-Wrangler includes a built-in shutdown flow.
+Wrangler can be stopped without touching the host machine:
 
-* Use **Shut Down Wrangler** in the Settings panel
-* The app will signal the host helper to bring the system down cleanly
+* Use **Stop Wrangler** in the Settings panel to stop only Wrangler services
+* Or return to the repository root and run `docker compose down`
 
 ---
 
