@@ -5,7 +5,19 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import process from "node:process";
-import type { Volume } from "@wrangler/shared";
+
+type Volume = {
+  id: string;
+  name: string;
+  mountPath: string;
+  deviceIdentifier: string | null;
+  sizeBytes: number | null;
+  removable: boolean;
+  writable: boolean;
+  fileSystem: string | null;
+  insertedAt: string;
+  lastSeenAt: string;
+};
 
 dotenv.config();
 
