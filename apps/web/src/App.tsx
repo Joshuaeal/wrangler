@@ -47,6 +47,12 @@ type RenameDialogState =
   | { kind: "auto"; volumeId: string; currentPath: string; currentName: string }
   | null;
 
+type ConfirmDialogState =
+  | { kind: "clearProjects"; title: string; message: string; confirmLabel: string }
+  | { kind: "resetDestinations"; title: string; message: string; confirmLabel: string }
+  | { kind: "deleteFolder"; title: string; message: string; confirmLabel: string; relativePath: string }
+  | null;
+
 type MacDirectoryEntry = {
   name: string;
   path: string;
@@ -323,6 +329,7 @@ export function App() {
   const [autoFolderNames, setAutoFolderNames] = useState<Record<string, string>>({});
   const [renameDialog, setRenameDialog] = useState<RenameDialogState>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [error, setError] = useState<string | null>(null);
   const [showJobsPopup, setShowJobsPopup] = useState(false);
   const [showLogsPopup, setShowLogsPopup] = useState(false);
@@ -695,11 +702,6 @@ export function App() {
   }
 
   async function clearProjects() {
-    const confirmed = window.confirm("Clear all projects and related job history? This will remove project records and project folders.");
-    if (!confirmed) {
-      return;
-    }
-
     try {
       await requestJson<void>("/projects", { method: "DELETE" });
       setSelectedProjectId("");
@@ -790,11 +792,6 @@ export function App() {
   }
 
   async function resetDestinations() {
-    const confirmed = window.confirm("Reset destination setup for this machine and return to the first-run prompt?");
-    if (!confirmed) {
-      return;
-    }
-
     try {
       await requestJson<void>("/destinations", { method: "DELETE" });
       setDestinationsConfigured(false);
@@ -845,7 +842,7 @@ export function App() {
   }
 
   async function createManagedFolder() {
-    if (!selectedProjectId || !newFolderName.trim()) {
+    if (!selectedProjectId || !newFolderName.trim() || managedRoot !== "project") {
       return;
     }
 
@@ -909,7 +906,7 @@ export function App() {
   }
 
   async function renameManagedFolder(relativePath: string, nextName: string) {
-    if (!selectedProjectId) {
+    if (!selectedProjectId || managedRoot !== "project") {
       return;
     }
 
@@ -953,7 +950,7 @@ export function App() {
   }
 
   async function deleteManagedFolder(relativePath: string) {
-    if (!selectedProjectId) {
+    if (!selectedProjectId || managedRoot !== "project") {
       return;
     }
 
@@ -1130,6 +1127,29 @@ export function App() {
       closeRenameDialog();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to rename folder.");
+    }
+  }
+
+  async function submitConfirmDialog() {
+    if (!confirmDialog) {
+      return;
+    }
+
+    const dialog = confirmDialog;
+    setConfirmDialog(null);
+
+    if (dialog.kind === "clearProjects") {
+      await clearProjects();
+      return;
+    }
+
+    if (dialog.kind === "resetDestinations") {
+      await resetDestinations();
+      return;
+    }
+
+    if (dialog.kind === "deleteFolder") {
+      await deleteManagedFolder(dialog.relativePath);
     }
   }
 
@@ -1491,7 +1511,18 @@ export function App() {
               <button onClick={createProject} disabled={!projectName.trim() || !destinationsConfigured}>
                 Create Project
               </button>
-              <button className="dangerButton" onClick={clearProjects} disabled={projects.length === 0}>
+              <button
+                className="dangerButton"
+                onClick={() =>
+                  setConfirmDialog({
+                    kind: "clearProjects",
+                    title: "Clear Projects",
+                    message: "Clear all projects, related job history, and project folders?",
+                    confirmLabel: "Clear Projects"
+                  })
+                }
+                disabled={projects.length === 0}
+              >
                 Clear Projects
               </button>
             </div>
@@ -1918,11 +1949,14 @@ export function App() {
               <strong>Create Folder</strong>
               <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="New folder name" />
               <div className="pickerActions">
-                <button onClick={createManagedFolder} disabled={!selectedProjectId || !newFolderName.trim()}>
+                <button onClick={createManagedFolder} disabled={!selectedProjectId || !newFolderName.trim() || managedRoot !== "project"}>
                   Add Folder
                 </button>
               </div>
             </div>
+            {managedRoot !== "project" ? (
+              <div className="muted">Folder edits are disabled outside the Project root to protect destination drives.</div>
+            ) : null}
             <div className="finderColumns">
               {managedPathChain.map((pathEntry) => (
                 <div key={`${managedRoot}:${pathEntry}`} className="finderColumn">
@@ -1969,6 +2003,7 @@ export function App() {
                           {entry.kind === "directory" ? (
                             <div className="rowActions">
                               <button
+                                disabled={managedRoot !== "project"}
                                 onClick={() =>
                                   openRenameDialog({
                                     kind: "managed",
@@ -1979,7 +2014,19 @@ export function App() {
                               >
                                 Rename Folder
                               </button>
-                              <button className="dangerButton" onClick={() => deleteManagedFolder(entry.relativePath)}>
+                              <button
+                                className="dangerButton"
+                                disabled={managedRoot !== "project"}
+                                onClick={() =>
+                                  setConfirmDialog({
+                                    kind: "deleteFolder",
+                                    title: "Delete Folder",
+                                    message: `Delete folder "${entry.relativePath.split("/").pop() ?? entry.relativePath}" from the project structure?`,
+                                    confirmLabel: "Delete Folder",
+                                    relativePath: entry.relativePath
+                                  })
+                                }
+                              >
                                 Delete Folder
                               </button>
                             </div>
@@ -2167,6 +2214,26 @@ export function App() {
                 <button onClick={closeRenameDialog}>Cancel</button>
                 <button onClick={() => void submitRenameDialog()} disabled={!renameValue.trim()}>
                   Save Rename
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
+      ) : null}
+
+      {confirmDialog ? (
+        <aside className="pickerModal">
+          <div className="pickerModalCard renameModalCard">
+            <div className="jobsPopupHeader">
+              <h2>{confirmDialog.title}</h2>
+              <button onClick={() => setConfirmDialog(null)}>Close</button>
+            </div>
+            <div className="stack">
+              <p className="muted">{confirmDialog.message}</p>
+              <div className="pickerActions">
+                <button onClick={() => setConfirmDialog(null)}>Cancel</button>
+                <button className="dangerButton" onClick={() => void submitConfirmDialog()}>
+                  {confirmDialog.confirmLabel}
                 </button>
               </div>
             </div>
@@ -2396,7 +2463,18 @@ export function App() {
           <small>Copyright © 2026 Wrangler. Intended for open-source release.</small>
           <small>Brand styling and associated marks shown here for attribution/reference.</small>
           <div className="appFooterActions">
-            <button type="button" className="footerResetButton" onClick={resetDestinations}>
+            <button
+              type="button"
+              className="footerResetButton"
+              onClick={() =>
+                setConfirmDialog({
+                  kind: "resetDestinations",
+                  title: "Reset Destinations",
+                  message: "Reset destination setup for this machine and return to the first-run prompt?",
+                  confirmLabel: "Reset Destinations"
+                })
+              }
+            >
               Reset To Defaults
             </button>
           </div>
