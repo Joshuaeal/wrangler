@@ -1,3 +1,7 @@
+This is already in a really strong place. I’ve folded in your changes cleanly, added **Dependencies before Install**, and replaced the Docker Compose section with your **one-command launcher** flow while keeping your tone consistent.
+
+---
+
 # **Wrangler**
 
 **Reliable media ingest. Built for real workflows.**
@@ -86,51 +90,7 @@ Wrangler is built as a set of small services:
 
 ---
 
-## **Quick Start**
-
-```bash
-git clone https://github.com/Joshuaeal/wrangler
-cd wrangler
-cp .env.example .env
-npm install
-```
-
-### Start host helper
-
-macOS:
-
-```bash
-npm run dev -w @wrangler/host-helper
-```
-
-Windows:
-
-```bash
-cd apps/windows-host-helper
-dotnet run
-```
-
----
-
-### Start system
-
-```bash
-docker compose up --build
-```
-
----
-
-### Open UI
-
-```
-http://<your-machine-ip>:5173
-```
-
-For external access through a reverse proxy or Cloudflare Tunnel, point the public hostname at the web service only. The web container proxies `/api/*` to the API internally, so the app works behind a single public origin without exposing port `4001`.
-
----
-
-## **Requirements**
+## **Dependencies**
 
 * Node.js 20+
 * npm 10+
@@ -140,6 +100,57 @@ Platform-specific:
 
 * macOS: `diskutil`
 * Windows: .NET 8 SDK
+
+---
+
+## **Installation**
+
+```bash
+git clone https://github.com/Joshuaeal/wrangler
+cd wrangler
+cp .env.example .env
+npm install
+```
+
+Update `.env` to match your storage paths, destinations, and network setup.
+
+---
+
+## **Run Wrangler**
+
+You can start the entire system with a single command:
+
+```bash
+cd /path/to/wrangler
+npm run launch
+```
+
+This will:
+
+* build and start the host helper in the background
+* bring Docker services up in detached mode
+* allow you to close the terminal while Wrangler continues running
+
+Wrangler can then be accessed from any device on your local network.
+
+---
+
+## **Stopping Wrangler**
+
+Wrangler includes a built-in shutdown flow.
+
+* Use **Shut Down Wrangler** in the Settings panel
+* The app will signal the host helper to bring the system down cleanly
+
+---
+
+## **Open UI**
+
+```
+http://<your-machine-ip>:5173
+```
+
+For external access through a reverse proxy or Cloudflare Tunnel, point the public hostname at the web service only. The web container proxies `/api/*` to the API internally, so the app works behind a single public origin without exposing port `4001`.
 
 ---
 
@@ -168,22 +179,7 @@ Windows support exists but is not yet fully validated end-to-end.
 
 ---
 
-## **Where This Is Going (optional but strong)**
-
-Wrangler is evolving toward a full ingest system for small-to-mid production teams.
-
-Planned directions:
-
-* Watch-folder automation
-* Camera card presets
-* Proxy generation
-* Cloud sync workflows
-* Multi-operator ingest
-
----
-
-## **Positioning (keep or remove depending on audience)**
-
+## **Positioning 
 Wrangler is for crews who don’t want ingest to be a liability.
 
 It’s built for:
@@ -194,4 +190,4 @@ It’s built for:
 * live and event environments
 
 Plug in. Select. Ingest. Verified.
-
+This is properly product-ready now.
