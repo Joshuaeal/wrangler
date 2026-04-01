@@ -302,13 +302,12 @@ export function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [setupUsername, setSetupUsername] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
-  const [setupAdvancedMetadata, setSetupAdvancedMetadata] = useState(false);
   const [setupInstanceName, setSetupInstanceName] = useState("");
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [showSettings, setShowSettings] = useState(false);
-  const [appSettings, setAppSettings] = useState<AppSettings>({ advancedMetadataEnabled: false, instanceName: "" });
+  const [appSettings, setAppSettings] = useState<AppSettings>({ advancedMetadataEnabled: true, instanceName: "" });
   const [instanceNameDraft, setInstanceNameDraft] = useState("");
   const [ingestMode, setIngestMode] = useState<IngestMode>("manual");
   const [volumes, setVolumes] = useState<Volume[]>([]);
@@ -707,7 +706,6 @@ export function App() {
       const savedSettings = await requestJson<AppSettings>("/settings", {
         method: "PUT",
         body: JSON.stringify({
-          advancedMetadataEnabled: setupAdvancedMetadata,
           instanceName: setupInstanceName
         })
       });
@@ -1576,16 +1574,6 @@ export function App() {
                 placeholder={isSetup ? "Minimum 8 characters" : "Password"}
               />
             </label>
-            {isSetup ? (
-              <label className={`authCheckbox ${setupAdvancedMetadata ? "authCheckboxSelected" : ""}`}>
-                <input
-                  type="checkbox"
-                  checked={setupAdvancedMetadata}
-                  onChange={(event) => setSetupAdvancedMetadata(event.target.checked)}
-                />
-                <span>Enable advanced camera metadata parsing on this install</span>
-              </label>
-            ) : null}
             <div className="pickerActions">
               <button
                 type="button"
@@ -2260,6 +2248,13 @@ export function App() {
               <button onClick={() => setShowSettings(false)}>Close</button>
             </div>
             <div className="stack">
+              {updateStatus.state === "available" ? (
+                <div className="destinationRow updateNotice">
+                  <strong>Update Available</strong>
+                  <span>A newer Wrangler build is on GitHub ({updateStatus.latestSha}).</span>
+                  <small>Run `git pull` from your Wrangler directory, then launch again.</small>
+                </div>
+              ) : null}
               <div className="destinationRow">
                 <strong>Signed In As</strong>
                 <span>{authStatus.username}</span>
@@ -2297,17 +2292,6 @@ export function App() {
                 </div>
               </div>
               <div className="destinationRow">
-                <strong>Metadata Parsing</strong>
-                <label className={`authCheckbox ${appSettings.advancedMetadataEnabled ? "authCheckboxSelected" : ""}`}>
-                  <input
-                    type="checkbox"
-                    checked={appSettings.advancedMetadataEnabled}
-                    onChange={(event) => void persistAppSettings({ advancedMetadataEnabled: event.target.checked })}
-                  />
-                  <span>Enable advanced camera metadata fields</span>
-                </label>
-              </div>
-              <div className="destinationRow">
                 <strong>Detailed Logs</strong>
                 <div className="pickerActions">
                   <button
@@ -2321,13 +2305,6 @@ export function App() {
                   </button>
                 </div>
               </div>
-              {updateStatus.state === "available" ? (
-                <div className="destinationRow">
-                  <strong>Update Available</strong>
-                  <span>A newer Wrangler build is on GitHub ({updateStatus.latestSha}).</span>
-                  <small className="muted">Run `git pull` from your Wrangler directory, then launch again.</small>
-                </div>
-              ) : null}
               <div className="destinationRow">
                 <strong>Reset To Defaults</strong>
                 <div className="authField">

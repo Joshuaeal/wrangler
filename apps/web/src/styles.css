@@ -361,6 +361,21 @@ select {
   color: rgba(247, 244, 239, 0.82);
 }
 
+.updateNotice {
+  background: linear-gradient(180deg, rgba(244, 196, 48, 0.18), rgba(232, 115, 46, 0.1));
+  border-color: rgba(244, 196, 48, 0.44);
+  box-shadow: 0 0 0 1px rgba(244, 196, 48, 0.1);
+}
+
+.updateNotice strong {
+  color: var(--accent);
+}
+
+.updateNotice span,
+.updateNotice small {
+  color: inherit;
+}
+
 .pickerRow {
   display: flex;
   justify-content: space-between;

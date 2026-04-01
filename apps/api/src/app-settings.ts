@@ -12,7 +12,7 @@ const settingsPath = path.join(config.appDataRoot, "app-settings.json");
 
 function buildDefaultSettings(): AppSettings {
   return {
-    advancedMetadataEnabled: false,
+    advancedMetadataEnabled: true,
     instanceName: ""
   };
 }
@@ -24,7 +24,8 @@ export function getAppSettings(): AppSettings {
 
   const parsed = JSON.parse(fs.readFileSync(settingsPath, "utf8")) as Partial<AppSettings>;
   return {
-    advancedMetadataEnabled: Boolean(parsed.advancedMetadataEnabled),
+    advancedMetadataEnabled:
+      typeof parsed.advancedMetadataEnabled === "boolean" ? parsed.advancedMetadataEnabled : true,
     instanceName: typeof parsed.instanceName === "string" ? parsed.instanceName.trim() : ""
   };
 }
