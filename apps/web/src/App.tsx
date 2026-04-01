@@ -1327,6 +1327,12 @@ export function App() {
   }, [selectedVolumeIds]);
 
   useEffect(() => {
+    if (managedRoot !== "project") {
+      setManagedRoot("project");
+    }
+  }, [managedRoot]);
+
+  useEffect(() => {
     if (!selectedProjectId || ingestMode !== "auto") {
       return;
     }
@@ -1927,13 +1933,9 @@ export function App() {
           </div>
           <div className="stack">
             <div className="pickerActions">
-              <select value={managedRoot} onChange={(event) => setManagedRoot(event.target.value as BrowserRoot)}>
-                {availableManagedRoots.map((root) => (
-                  <option key={root.value} value={root.value}>
-                    {root.label}
-                  </option>
-                ))}
-              </select>
+              <button type="button" disabled>
+                Project
+              </button>
               <button
                 onClick={() => {
                   const nextPath = managedPath === "." ? "." : managedPath.split("/").slice(0, -1).join("/") || ".";
@@ -1954,9 +1956,6 @@ export function App() {
                 </button>
               </div>
             </div>
-            {managedRoot !== "project" ? (
-              <div className="muted">Folder edits are disabled outside the Project root to protect destination drives.</div>
-            ) : null}
             <div className="finderColumns">
               {managedPathChain.map((pathEntry) => (
                 <div key={`${managedRoot}:${pathEntry}`} className="finderColumn">
