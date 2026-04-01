@@ -851,11 +851,20 @@ export function App() {
   async function shutdownWrangler() {
     try {
       setIsStoppingWrangler(true);
-      await requestJson<void>("/system/shutdown", { method: "POST" });
       setShowSettings(false);
+      await requestJson<void>("/system/shutdown", { method: "POST" });
     } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : "Unable to stop Wrangler.";
+      const isExpectedDisconnect =
+        /failed to fetch|networkerror|load failed|the network connection was lost/i.test(message);
+
+      if (isExpectedDisconnect) {
+        return;
+      }
+
       setIsStoppingWrangler(false);
-      setError(requestError instanceof Error ? requestError.message : "Unable to stop Wrangler.");
+      setShowSettings(true);
+      setError(message);
     }
   }
 
