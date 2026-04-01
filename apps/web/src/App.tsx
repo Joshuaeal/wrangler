@@ -77,6 +77,34 @@ type SourcePreview = {
   previewable: boolean;
 };
 
+type SourceMetadata = {
+  fileName: string;
+  relativePath: string;
+  fileType: string | null;
+  mimeType: string | null;
+  cameraMake: string | null;
+  cameraModel: string | null;
+  lensModel: string | null;
+  reelName: string | null;
+  clipName: string | null;
+  timecode: string | null;
+  createdAt: string | null;
+  durationSeconds: number | null;
+  frameRate: number | null;
+  resolution: string | null;
+  videoCodec: string | null;
+  audioCodec: string | null;
+  audioChannels: number | null;
+  sampleRate: number | null;
+  colorSpace: string | null;
+  gamma: string | null;
+  iso: number | null;
+  shutterSpeed: string | null;
+  whiteBalance: string | null;
+  aperture: string | null;
+  raw: Record<string, string | number | null>;
+};
+
 function parseSummaryProgress(summary: string | null): number | null {
   if (!summary) {
     return null;
@@ -196,6 +224,25 @@ function formatFileSize(bytes: number): string {
   return `${value.toFixed(precision)} ${units[unitIndex]}`;
 }
 
+function formatDuration(seconds: number | null): string | null {
+  if (seconds === null || !Number.isFinite(seconds)) {
+    return null;
+  }
+
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  return [hours, minutes, remainingSeconds].map((value) => value.toString().padStart(2, "0")).join(":");
+}
+
+function formatFrameRate(frameRate: number | null): string | null {
+  if (frameRate === null || !Number.isFinite(frameRate)) {
+    return null;
+  }
+
+  return `${frameRate.toFixed(frameRate >= 100 ? 0 : frameRate >= 10 ? 2 : 3)} fps`;
+}
+
 function toggleValue(values: string[], nextValue: string): string[] {
   return values.includes(nextValue) ? values.filter((value) => value !== nextValue) : [...values, nextValue];
 }
@@ -242,6 +289,8 @@ export function App() {
   const [showLogsPopup, setShowLogsPopup] = useState(false);
   const [draggedSourceKey, setDraggedSourceKey] = useState<string | null>(null);
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
+  const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
+  const [sourceMetadataLoading, setSourceMetadataLoading] = useState(false);
   const [sourceFavorites, setSourceFavorites] = useState<SourceFavorite[]>([]);
 
   useEffect(() => {
@@ -255,6 +304,23 @@ export function App() {
     document.body.dataset.theme = theme;
     window.localStorage.setItem("wrangler-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!sourcePreview || sourcePreview.kind !== "file") {
+      setSourceMetadata(null);
+      setSourceMetadataLoading(false);
+      return;
+    }
+
+    setSourceMetadataLoading(true);
+    void requestJson<SourceMetadata>(`/volumes/${sourcePreview.volumeId}/metadata?path=${encodeURIComponent(sourcePreview.relativePath)}`)
+      .then((metadata) => setSourceMetadata(metadata))
+      .catch((requestError) => {
+        setSourceMetadata(null);
+        setError(requestError instanceof Error ? requestError.message : "Unable to load metadata.");
+      })
+      .finally(() => setSourceMetadataLoading(false));
+  }, [sourcePreview]);
 
   useEffect(() => {
     try {
@@ -1179,6 +1245,91 @@ export function App() {
                         <dt>Modified</dt>
                         <dd>{new Date(sourcePreview.modifiedAt).toLocaleString()}</dd>
                       </div>
+                      {sourceMetadataLoading ? (
+                        <div>
+                          <dt>Metadata</dt>
+                          <dd>Reading EXIF and clip metadata...</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.cameraMake || sourceMetadata?.cameraModel ? (
+                        <div>
+                          <dt>Camera</dt>
+                          <dd>{[sourceMetadata.cameraMake, sourceMetadata.cameraModel].filter(Boolean).join(" ")}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.lensModel ? (
+                        <div>
+                          <dt>Lens</dt>
+                          <dd>{sourceMetadata.lensModel}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.reelName ? (
+                        <div>
+                          <dt>Reel</dt>
+                          <dd>{sourceMetadata.reelName}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.timecode ? (
+                        <div>
+                          <dt>Timecode</dt>
+                          <dd>{sourceMetadata.timecode}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.resolution ? (
+                        <div>
+                          <dt>Resolution</dt>
+                          <dd>{sourceMetadata.resolution}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.frameRate != null ? (
+                        <div>
+                          <dt>Frame Rate</dt>
+                          <dd>{formatFrameRate(sourceMetadata?.frameRate ?? null)}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.durationSeconds != null ? (
+                        <div>
+                          <dt>Duration</dt>
+                          <dd>{formatDuration(sourceMetadata?.durationSeconds ?? null)}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.videoCodec ? (
+                        <div>
+                          <dt>Video</dt>
+                          <dd>{sourceMetadata.videoCodec}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.audioCodec ? (
+                        <div>
+                          <dt>Audio</dt>
+                          <dd>
+                            {[
+                              sourceMetadata.audioCodec,
+                              sourceMetadata.audioChannels ? `${sourceMetadata.audioChannels} ch` : null,
+                              sourceMetadata.sampleRate ? `${sourceMetadata.sampleRate} Hz` : null
+                            ].filter(Boolean).join(" • ")}
+                          </dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.colorSpace || sourceMetadata?.gamma ? (
+                        <div>
+                          <dt>Color</dt>
+                          <dd>{[sourceMetadata.colorSpace, sourceMetadata.gamma].filter(Boolean).join(" • ")}</dd>
+                        </div>
+                      ) : null}
+                      {sourceMetadata?.iso || sourceMetadata?.whiteBalance || sourceMetadata?.shutterSpeed || sourceMetadata?.aperture ? (
+                        <div>
+                          <dt>Exposure</dt>
+                          <dd>
+                            {[
+                              sourceMetadata.iso ? `ISO ${sourceMetadata.iso}` : null,
+                              sourceMetadata.whiteBalance ? `WB ${sourceMetadata.whiteBalance}` : null,
+                              sourceMetadata.shutterSpeed ? `Shutter ${sourceMetadata.shutterSpeed}` : null,
+                              sourceMetadata.aperture ? `Aperture ${sourceMetadata.aperture}` : null
+                            ].filter(Boolean).join(" • ")}
+                          </dd>
+                        </div>
+                      ) : null}
                     </dl>
                   </div>
                 </div>

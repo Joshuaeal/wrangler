@@ -28,6 +28,7 @@ import {
 } from "./db.js";
 import { ensureDirectories, assertInsideRoot } from "./paths.js";
 import { buildVolumeThumbnail } from "./thumbnails.js";
+import { readVolumeMetadata } from "./metadata.js";
 import { getVolumeOrThrow, listManyVolumeFiles, listVolumeFiles, listVolumes } from "./volume-service.js";
 
 ensureDirectories();
@@ -147,6 +148,16 @@ app.get("/volumes/:id/thumbnail", async (request, response, next) => {
     response.setHeader("Content-Type", "image/jpeg");
     response.setHeader("Cache-Control", "public, max-age=300");
     response.send(thumbnail);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/volumes/:id/metadata", async (request, response, next) => {
+  try {
+    const volume = await getVolumeOrThrow(request.params.id);
+    const relativePath = typeof request.query.path === "string" ? request.query.path : ".";
+    response.json(await readVolumeMetadata(volume, relativePath));
   } catch (error) {
     next(error);
   }

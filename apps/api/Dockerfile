@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim AS builder
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y python3 make g++ rsync ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y python3 make g++ rsync ffmpeg libimage-exiftool-perl && rm -rf /var/lib/apt/lists/*
 
 COPY package.json tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/tsconfig.json ./packages/shared/
@@ -21,7 +21,7 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y rsync ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y rsync ffmpeg libimage-exiftool-perl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/node_modules ./node_modules

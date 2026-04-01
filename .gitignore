@@ -8,3 +8,4 @@ data/destination-settings.json
 apps/web/dist
 **/bin
 **/obj
+.nx
