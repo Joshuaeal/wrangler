@@ -306,6 +306,7 @@ export function App() {
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [isStoppingWrangler, setIsStoppingWrangler] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [appSettings, setAppSettings] = useState<AppSettings>({ advancedMetadataEnabled: true, instanceName: "" });
   const [instanceNameDraft, setInstanceNameDraft] = useState("");
@@ -849,9 +850,11 @@ export function App() {
 
   async function shutdownWrangler() {
     try {
+      setIsStoppingWrangler(true);
       await requestJson<void>("/system/shutdown", { method: "POST" });
       setShowSettings(false);
     } catch (requestError) {
+      setIsStoppingWrangler(false);
       setError(requestError instanceof Error ? requestError.message : "Unable to stop Wrangler.");
     }
   }
@@ -1528,6 +1531,16 @@ export function App() {
     setManagedFileCache({});
   }, [availableManagedRoots, managedRoot]);
 
+  if (isStoppingWrangler) {
+    return (
+      <main className="layout authLayout shutdownScreen">
+        <div className="brandHeader shutdownBrandHeader">
+          <img className="brandLogo shutdownBrandLogo" src={wranglerLogo} alt="Wrangler" />
+        </div>
+      </main>
+    );
+  }
+
   if (authLoading) {
     return (
       <main className="layout authLayout">
@@ -2173,20 +2186,19 @@ export function App() {
                 </div>
               </div>
               <div className="destinationRow">
-                <label className="checkRow">
-                  <input
-                    type="checkbox"
-                    checked={draftDestinations.destinationBEnabled}
-                    onChange={(event) =>
-                      void persistDestinations({
-                        ...draftDestinations,
-                        destinationBEnabled: event.target.checked
-                      })
-                    }
-                  />
+                <button
+                  type="button"
+                  className={`checkRow checkCard ${draftDestinations.destinationBEnabled ? "checkRowSelected" : ""}`}
+                  onClick={() =>
+                    void persistDestinations({
+                      ...draftDestinations,
+                      destinationBEnabled: !draftDestinations.destinationBEnabled
+                    })
+                  }
+                >
                   <span>Enable Third Copy</span>
                   <small>Add another verified destination.</small>
-                </label>
+                </button>
                 {draftDestinations.destinationBEnabled ? (
                   <>
                     <code>{draftDestinations.destinationB}</code>
@@ -2197,20 +2209,19 @@ export function App() {
                 ) : null}
               </div>
               <div className="destinationRow">
-                <label className="checkRow">
-                  <input
-                    type="checkbox"
-                    checked={draftDestinations.destinationCEnabled}
-                    onChange={(event) =>
-                      void persistDestinations({
-                        ...draftDestinations,
-                        destinationCEnabled: event.target.checked
-                      })
-                    }
-                  />
+                <button
+                  type="button"
+                  className={`checkRow checkCard ${draftDestinations.destinationCEnabled ? "checkRowSelected" : ""}`}
+                  onClick={() =>
+                    void persistDestinations({
+                      ...draftDestinations,
+                      destinationCEnabled: !draftDestinations.destinationCEnabled
+                    })
+                  }
+                >
                   <span>Enable Fourth Copy</span>
                   <small>Add one more verified destination.</small>
-                </label>
+                </button>
                 {draftDestinations.destinationCEnabled ? (
                   <>
                     <code>{draftDestinations.destinationC}</code>
