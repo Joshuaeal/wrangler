@@ -2272,7 +2272,15 @@ export function App() {
                 </select>
               </div>
               <div className="destinationRow">
-                <strong>Instance Name</strong>
+                <div className="sectionTitleRow">
+                  <strong>Instance Name</strong>
+                  <span
+                    className="infoHint"
+                    data-tooltip="The saved instance name appears in the browser tab title so multiple Wrangler windows are easier to tell apart."
+                  >
+                    ?
+                  </span>
+                </div>
                 <input
                   value={instanceNameDraft}
                   onChange={(event) => setInstanceNameDraft(event.target.value)}
@@ -2321,6 +2329,29 @@ export function App() {
                 </div>
               ) : null}
               <div className="destinationRow">
+                <strong>Reset To Defaults</strong>
+                <div className="authField">
+                  <label htmlFor="reset-password-input">Confirm Password</label>
+                  <input
+                    id="reset-password-input"
+                    type="password"
+                    value={resetPassword}
+                    onChange={(event) => setResetPassword(event.target.value)}
+                    placeholder="Enter your password to reset setup"
+                  />
+                </div>
+                <div className="pickerActions">
+                  <button
+                    type="button"
+                    className="dangerButton"
+                    onClick={() => void resetDestinations()}
+                    disabled={!resetPassword.trim()}
+                  >
+                    Reset To Defaults
+                  </button>
+                </div>
+              </div>
+              <div className="destinationRow">
                 <div className="sectionTitleRow">
                   <strong>Stop Wrangler</strong>
                   <span
@@ -2345,35 +2376,10 @@ export function App() {
                   >
                     Stop Wrangler
                   </button>
-                </div>
-              </div>
-              <div className="destinationRow">
-                <strong>Reset To Defaults</strong>
-                <div className="authField">
-                  <label htmlFor="reset-password-input">Confirm Password</label>
-                  <input
-                    id="reset-password-input"
-                    type="password"
-                    value={resetPassword}
-                    onChange={(event) => setResetPassword(event.target.value)}
-                    placeholder="Enter your password to reset setup"
-                  />
-                </div>
-                <div className="pickerActions">
-                  <button
-                    type="button"
-                    className="dangerButton"
-                    onClick={() => void resetDestinations()}
-                    disabled={!resetPassword.trim()}
-                  >
-                    Reset To Defaults
+                  <button type="button" className="dangerButton" onClick={() => void logout()}>
+                    Log Out
                   </button>
                 </div>
-              </div>
-              <div className="pickerActions">
-                <button type="button" className="dangerButton" onClick={() => void logout()}>
-                  Log Out
-                </button>
               </div>
             </div>
           </div>
@@ -2626,7 +2632,15 @@ export function App() {
               <code>npm run launch</code>
               <div className="setupSteps">
                 <div className="destinationRow">
-                  <strong>Instance Name</strong>
+                  <div className="sectionTitleRow">
+                    <strong>Instance Name</strong>
+                    <span
+                      className="infoHint"
+                      data-tooltip="The saved instance name appears in the browser tab title so multiple Wrangler windows are easier to tell apart."
+                    >
+                      ?
+                    </span>
+                  </div>
                   <input
                     value={setupInstanceName}
                     onChange={(event) => setSetupInstanceName(event.target.value)}
@@ -2641,7 +2655,6 @@ export function App() {
                       Save Name
                     </button>
                   </div>
-                  <small className="muted">Used in the browser tab title so multiple Wrangler windows are easy to tell apart.</small>
                 </div>
                 <div className="destinationRow">
                   <strong>1. Choose Project Root</strong>
