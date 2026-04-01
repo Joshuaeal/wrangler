@@ -50,7 +50,6 @@ type RenameDialogState =
 type ConfirmDialogState =
   | { kind: "clearProjects"; title: string; message: string; confirmLabel: string }
   | { kind: "resetDestinations"; title: string; message: string; confirmLabel: string }
-  | { kind: "deleteFolder"; title: string; message: string; confirmLabel: string; relativePath: string }
   | null;
 
 type MacDirectoryEntry = {
@@ -1148,9 +1147,6 @@ export function App() {
       return;
     }
 
-    if (dialog.kind === "deleteFolder") {
-      await deleteManagedFolder(dialog.relativePath);
-    }
   }
 
   function removePooledSource(volumeId: string, sourcePath: string) {
@@ -1523,7 +1519,7 @@ export function App() {
                   setConfirmDialog({
                     kind: "clearProjects",
                     title: "Clear Projects",
-                    message: "Clear all projects, related job history, and project folders?",
+                    message: "Clear all projects and related job history from Wrangler without deleting folders already written to disk?",
                     confirmLabel: "Clear Projects"
                   })
                 }
@@ -2012,21 +2008,6 @@ export function App() {
                                 }
                               >
                                 Rename Folder
-                              </button>
-                              <button
-                                className="dangerButton"
-                                disabled={managedRoot !== "project"}
-                                onClick={() =>
-                                  setConfirmDialog({
-                                    kind: "deleteFolder",
-                                    title: "Delete Folder",
-                                    message: `Delete folder "${entry.relativePath.split("/").pop() ?? entry.relativePath}" from the project structure?`,
-                                    confirmLabel: "Delete Folder",
-                                    relativePath: entry.relativePath
-                                  })
-                                }
-                              >
-                                Delete Folder
                               </button>
                             </div>
                           ) : null}

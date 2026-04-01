@@ -285,18 +285,6 @@ app.post("/projects", async (request, response, next) => {
 
 app.delete("/projects", async (_request, response, next) => {
   try {
-    const projects = listProjects();
-    const destinations = getDestinationSettings();
-
-    await Promise.all(
-      projects.flatMap((project) => [
-        fs.rm(project.path, { recursive: true, force: true }),
-        fs.rm(path.join(destinations.destinationA, project.slug), { recursive: true, force: true }),
-        fs.rm(path.join(destinations.destinationB, project.slug), { recursive: true, force: true }),
-        fs.rm(path.join(destinations.destinationC, project.slug), { recursive: true, force: true })
-      ])
-    );
-
     deleteAllProjects();
     response.status(204).send();
   } catch (error) {
