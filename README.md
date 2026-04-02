@@ -138,6 +138,7 @@ cd wrangler
 cp .env.example .env
 npm install
 ```
+We reccomend running Wrangler for the first time locally as you will need to grant it permissions. After initialising, the GUI can be accessed on any machine in your network. 
 
 Update `.env` to match your storage paths, destinations, and network setup.
 
