@@ -79,12 +79,6 @@ type VolumePane = {
   path: string;
 };
 
-type SourceFavorite = {
-  volumeId: string;
-  volumeName: string;
-  path: string;
-};
-
 type PooledSourceItem = {
   volumeId: string;
   volumeName: string;
@@ -235,6 +229,10 @@ function canPreviewFile(entry: FileEntry): boolean {
   return /\.(avif|avi|bmp|gif|heic|heif|jpe?g|m4v|mkv|mov|mp4|png|tiff?|webm|webp)$/i.test(entry.relativePath);
 }
 
+function canPreviewPath(relativePath: string): boolean {
+  return /\.(avif|avi|bmp|gif|heic|heif|jpe?g|m4v|mkv|mov|mp4|png|tiff?|webm|webp)$/i.test(relativePath);
+}
+
 function shouldHideSourceEntry(entry: FileEntry): boolean {
   const name = entry.relativePath.split("/").pop()?.toLowerCase() ?? "";
   const extension = name.includes(".") ? `.${name.split(".").pop()}` : "";
@@ -332,6 +330,7 @@ export function App() {
   const [macDirectoryHistoryIndex, setMacDirectoryHistoryIndex] = useState(0);
   const [macDirectories, setMacDirectories] = useState<MacDirectoryEntry[]>([]);
   const [destinationPresets, setDestinationPresets] = useState<DestinationPreset[]>([]);
+  const [destinationFavorites, setDestinationFavorites] = useState<DestinationPreset[]>([]);
   const [managedRoot, setManagedRoot] = useState<BrowserRoot>("project");
   const [managedPath, setManagedPath] = useState(".");
   const [managedFileCache, setManagedFileCache] = useState<Record<string, FileEntry[]>>({});
@@ -350,7 +349,10 @@ export function App() {
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [sourceMetadataLoading, setSourceMetadataLoading] = useState(false);
-  const [sourceFavorites, setSourceFavorites] = useState<SourceFavorite[]>([]);
+  const [sourcePoolHoverPreview, setSourcePoolHoverPreview] = useState<{
+    volumeId: string;
+    sourcePath: string;
+  } | null>(null);
   const finderColumnsRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const autoFolderNamesRef = useRef<Record<string, string>>({});
 
@@ -375,6 +377,30 @@ export function App() {
       ? `Wrangler | ${appSettings.instanceName.trim()}`
       : "Wrangler";
   }, [appSettings.instanceName]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("wrangler-destination-favorites");
+      if (!stored) {
+        return;
+      }
+
+      const parsed = JSON.parse(stored) as DestinationPreset[];
+      if (Array.isArray(parsed)) {
+        setDestinationFavorites(
+          parsed.filter(
+            (favorite) => typeof favorite?.path === "string" && typeof favorite?.label === "string"
+          )
+        );
+      }
+    } catch {
+      window.localStorage.removeItem("wrangler-destination-favorites");
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("wrangler-destination-favorites", JSON.stringify(destinationFavorites));
+  }, [destinationFavorites]);
 
   useEffect(() => {
     setInstanceNameDraft(appSettings.instanceName);
@@ -431,33 +457,6 @@ export function App() {
       })
       .finally(() => setSourceMetadataLoading(false));
   }, [sourcePreview]);
-
-  useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem("wrangler-source-favorites");
-      if (!stored) {
-        return;
-      }
-
-      const parsed = JSON.parse(stored) as SourceFavorite[];
-      if (Array.isArray(parsed)) {
-        setSourceFavorites(
-          parsed.filter(
-            (favorite) =>
-              typeof favorite?.volumeId === "string" &&
-              typeof favorite?.volumeName === "string" &&
-              typeof favorite?.path === "string"
-          )
-        );
-      }
-    } catch {
-      window.localStorage.removeItem("wrangler-source-favorites");
-    }
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem("wrangler-source-favorites", JSON.stringify(sourceFavorites));
-  }, [sourceFavorites]);
 
   async function refreshAuthStatus(): Promise<AuthStatus | null> {
     try {
@@ -991,6 +990,32 @@ export function App() {
     setDestinationPickerField(null);
   }
 
+  function folderLabelFromPath(p: string): string {
+    if (p === "." || p === "/") {
+      return p;
+    }
+    const normalized = p.endsWith("/") ? p.slice(0, -1) : p;
+    const parts = normalized.split("/").filter(Boolean);
+    return parts[parts.length - 1] ?? normalized;
+  }
+
+  function toggleDestinationFavorite(favoritePath: string) {
+    setDestinationFavorites((current) => {
+      const exists = current.some((favorite) => favorite.path === favoritePath);
+      if (exists) {
+        return current.filter((favorite) => favorite.path !== favoritePath);
+      }
+
+      return [
+        ...current,
+        {
+          path: favoritePath,
+          label: folderLabelFromPath(favoritePath)
+        }
+      ].sort((left, right) => left.label.localeCompare(right.label));
+    });
+  }
+
   async function createManagedFolder() {
     if (!selectedProjectId || !newFolderName.trim() || managedRoot !== "project") {
       return;
@@ -1329,25 +1354,6 @@ export function App() {
   );
 
   const managedPathChain = useMemo(() => getPathChain(managedPath), [managedPath]);
-
-  function toggleSourceFavorite(volumeId: string, volumeName: string, favoritePath: string) {
-    setSourceFavorites((current) => {
-      const exists = current.some((favorite) => favorite.volumeId === volumeId && favorite.path === favoritePath);
-      if (exists) {
-        return current.filter((favorite) => !(favorite.volumeId === volumeId && favorite.path === favoritePath));
-      }
-
-      return [...current, { volumeId, volumeName, path: favoritePath }].sort((left, right) =>
-        `${left.volumeName}:${left.path}`.localeCompare(`${right.volumeName}:${right.path}`)
-      );
-    });
-  }
-
-  function removeSourceFavorite(volumeId: string, favoritePath: string) {
-    setSourceFavorites((current) =>
-      current.filter((favorite) => !(favorite.volumeId === volumeId && favorite.path === favoritePath))
-    );
-  }
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -1744,29 +1750,8 @@ export function App() {
                       >
                         Up
                       </button>
-                      <button onClick={() => toggleSourceFavorite(pane.volume.id, pane.volume.name, pane.path)}>
-                        {sourceFavorites.some((favorite) => favorite.volumeId === pane.volume.id && favorite.path === pane.path)
-                          ? "Remove Favorite"
-                          : "Add Favorite"}
-                      </button>
                     </div>
                   </div>
-                  {sourceFavorites.some((favorite) => favorite.volumeId === pane.volume.id) ? (
-                    <div className="sourceFavoriteList">
-                      {sourceFavorites
-                        .filter((favorite) => favorite.volumeId === pane.volume.id)
-                        .map((favorite) => (
-                          <div key={`${favorite.volumeId}:${favorite.path}`} className="sourceFavoriteItem">
-                            <button type="button" className="sourceFavoriteButton" onClick={() => navigateVolume(pane.volume.id, favorite.path)}>
-                              {favorite.path === "." ? "Root" : favorite.path}
-                            </button>
-                            <button type="button" className="sourceFavoriteRemove" onClick={() => removeSourceFavorite(pane.volume.id, favorite.path)}>
-                              Remove
-                            </button>
-                          </div>
-                        ))}
-                    </div>
-                  ) : null}
                   <div
                     className="finderColumns"
                     ref={(element) => {
@@ -1815,21 +1800,6 @@ export function App() {
                                   <span>{file.relativePath.split("/").pop() ?? file.relativePath}</span>
                                   <small>{file.kind === "directory" ? "folder" : formatFileSize(file.size)}</small>
                                 </button>
-                                {file.kind === "directory" ? (
-                                  <div className="rowActions">
-                                    <button
-                                      type="button"
-                                      className="sourceFavoriteInlineButton"
-                                      onClick={() => toggleSourceFavorite(pane.volume.id, pane.volume.name, file.relativePath)}
-                                    >
-                                      {sourceFavorites.some(
-                                        (favorite) => favorite.volumeId === pane.volume.id && favorite.path === file.relativePath
-                                      )
-                                        ? "Unfavorite"
-                                        : "Favorite"}
-                                    </button>
-                                  </div>
-                                ) : null}
                               </li>
                             );
                           })}
@@ -2015,6 +1985,13 @@ export function App() {
                   key={sourceKey(source.volumeId, source.sourcePath)}
                   className={`sourcePoolItem ${draggedSourceKey === sourceKey(source.volumeId, source.sourcePath) ? "sourcePoolItemDragging" : ""}`}
                   draggable
+                  onMouseEnter={() => {
+                    if (!canPreviewPath(source.sourcePath)) {
+                      return;
+                    }
+                    setSourcePoolHoverPreview({ volumeId: source.volumeId, sourcePath: source.sourcePath });
+                  }}
+                  onMouseLeave={() => setSourcePoolHoverPreview(null)}
                   onDragStart={(event) => {
                     const payload = JSON.stringify({ volumeId: source.volumeId, sourcePath: source.sourcePath });
                     event.dataTransfer.setData("application/json", payload);
@@ -2023,6 +2000,17 @@ export function App() {
                   }}
                   onDragEnd={() => setDraggedSourceKey(null)}
                 >
+                  {sourcePoolHoverPreview &&
+                  sourcePoolHoverPreview.volumeId === source.volumeId &&
+                  sourcePoolHoverPreview.sourcePath === source.sourcePath ? (
+                    <div className="sourcePoolHoverThumb">
+                      <img
+                        className="sourcePoolHoverThumbImg"
+                        src={`${apiBase}/volumes/${source.volumeId}/thumbnail?path=${encodeURIComponent(source.sourcePath)}&size=240`}
+                        alt={source.sourcePath}
+                      />
+                    </div>
+                  ) : null}
                   <strong>{source.sourcePath.split("/").pop() ?? source.sourcePath}</strong>
                   <span>{source.volumeName}</span>
                   <small>Source: {source.sourcePath}</small>
@@ -2597,13 +2585,40 @@ export function App() {
                   ))}
                 </div>
               ) : null}
+              {destinationFavorites.length > 0 ? (
+                <div className="destinationPresetRow">
+                  {destinationFavorites.map((favorite) => (
+                    <button
+                      key={favorite.path}
+                      type="button"
+                      className="destinationPresetButton"
+                      onClick={() => navigateDestinationPicker(favorite.path)}
+                    >
+                      {favorite.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <ul className="fileList">
                 {macDirectories.map((directory) => (
                   <li key={directory.path}>
-                    <button className="jobButton" onClick={() => navigateDestinationPicker(directory.path)}>
-                      <span>{directory.name}</span>
-                      <small>{directory.path}</small>
-                    </button>
+                    <div className="destinationPickerRow">
+                      <button className="jobButton destinationPickerNav" onClick={() => navigateDestinationPicker(directory.path)}>
+                        <span>{directory.name}</span>
+                        <small>{directory.path}</small>
+                      </button>
+                      <button
+                        type="button"
+                        className={`destinationFavoriteButton ${
+                          destinationFavorites.some((favorite) => favorite.path === directory.path)
+                            ? "destinationFavoriteButtonSelected"
+                            : ""
+                        }`}
+                        onClick={() => toggleDestinationFavorite(directory.path)}
+                      >
+                        {destinationFavorites.some((favorite) => favorite.path === directory.path) ? "Unfavorite" : "Favorite"}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
