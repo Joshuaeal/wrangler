@@ -182,35 +182,79 @@ export async function checksumDestination(
 
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
   let processedBytes = 0;
+  const filesWithRelativePaths = files.map((file) => ({
+    ...file,
+    relativePath: path.relative(destinationRoot, file.path)
+  }));
 
-  for (const file of files) {
-    assertJobNotCancelled(jobId);
-    const relativePath = path.relative(destinationRoot, file.path);
-    updateJobStatus(jobId, destinationKind === "project" ? "hashingProject" : "verifyingDestinations", {
-      summary: `${destinationKind === "project" ? "Checksumming project" : `Verifying ${destinationKind}`}: ${formatTransferSize(processedBytes)} / ${formatTransferSize(totalBytes)} | ${relativePath}`
-    });
-    const checksum = await sha256File(file.path);
+  // Hashing can be a big time sink on large media sets. We parallelize safely
+  // with a low concurrency limit to avoid hammering slow/flaky disks.
+  const concurrency = Math.min(4, filesWithRelativePaths.length);
+  const status = destinationKind === "project" ? "hashingProject" : "verifyingDestinations";
 
-     if (manifest) {
-      const expectedChecksum = manifest.get(relativePath);
-      if (!expectedChecksum) {
-        throw new Error(`Destination ${destinationKind} contains unexpected file ${relativePath}`);
+  let firstError: unknown = null;
+  let hadError = false;
+  let nextIndex = 0;
+  let lastStatusUpdateAt = 0;
+
+  async function worker(): Promise<void> {
+    while (true) {
+      if (hadError) {
+        return;
       }
-      if (expectedChecksum !== checksum) {
-        throw new Error(`Checksum mismatch for ${relativePath} in ${destinationKind}`);
+
+      assertJobNotCancelled(jobId);
+
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= filesWithRelativePaths.length) {
+        return;
+      }
+
+      const file = filesWithRelativePaths[index];
+
+      // Compute checksum first, then validate + persist the record.
+      const checksum = await sha256File(file.path);
+
+      if (manifest) {
+        const expectedChecksum = manifest.get(file.relativePath);
+        if (!expectedChecksum) {
+          hadError = true;
+          firstError = new Error(`Destination ${destinationKind} contains unexpected file ${file.relativePath}`);
+          return;
+        }
+        if (expectedChecksum !== checksum) {
+          hadError = true;
+          firstError = new Error(`Checksum mismatch for ${file.relativePath} in ${destinationKind}`);
+          return;
+        }
+      }
+
+      saveCopyRecord({
+        jobId,
+        relativePath: file.relativePath,
+        destinationKind,
+        absolutePath: file.path,
+        checksum,
+        size: file.size,
+        verifiedAt: new Date().toISOString()
+      });
+
+      processedBytes += file.size;
+
+      const now = Date.now();
+      if (now - lastStatusUpdateAt > 250 || processedBytes >= totalBytes) {
+        lastStatusUpdateAt = now;
+        updateJobStatus(jobId, status, {
+          summary: `${destinationKind === "project" ? "Checksumming project" : `Verifying ${destinationKind}`}: ${formatTransferSize(processedBytes)} / ${formatTransferSize(totalBytes)} | ${file.relativePath}`
+        });
       }
     }
+  }
 
-    saveCopyRecord({
-      jobId,
-      relativePath,
-      destinationKind,
-      absolutePath: file.path,
-      checksum,
-      size: file.size,
-      verifiedAt: new Date().toISOString()
-    });
-    processedBytes += file.size;
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  if (firstError) {
+    throw firstError;
   }
 
   if (manifest && manifest.size !== files.length) {

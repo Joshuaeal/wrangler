@@ -26,6 +26,7 @@ import {
   listJobEvents,
   listJobs,
   listProjects,
+  restartJob,
   verifyUserCredentials
 } from "./db.js";
 import { ensureDirectories, assertInsideRoot } from "./paths.js";
@@ -428,6 +429,15 @@ app.delete("/jobs/:id", (request, response, next) => {
 app.post("/jobs/:id/cancel", (request, response, next) => {
   try {
     cancelJob(request.params.id);
+    response.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/jobs/:id/restart", (request, response, next) => {
+  try {
+    restartJob(request.params.id);
     response.status(204).send();
   } catch (error) {
     next(error);

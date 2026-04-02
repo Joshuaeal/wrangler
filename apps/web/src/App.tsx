@@ -848,23 +848,26 @@ export function App() {
     }
   }
 
+  async function restartJob(jobId: string) {
+    try {
+      await requestJson<void>(`/jobs/${jobId}/restart`, { method: "POST" });
+      if (jobDetails?.job.id === jobId) {
+        await inspectJob(jobId);
+      }
+      await refreshAll();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to restart job.");
+    }
+  }
+
   async function shutdownWrangler() {
     try {
       setIsStoppingWrangler(true);
       setShowSettings(false);
       await requestJson<void>("/system/shutdown", { method: "POST" });
-    } catch (requestError) {
-      const message = requestError instanceof Error ? requestError.message : "Unable to stop Wrangler.";
-      const isExpectedDisconnect =
-        /failed to fetch|networkerror|load failed|the network connection was lost/i.test(message);
-
-      if (isExpectedDisconnect) {
-        return;
-      }
-
-      setIsStoppingWrangler(false);
-      setShowSettings(true);
-      setError(message);
+    } catch {
+      // Once shutdown starts the API/web containers may disappear before the
+      // browser receives a clean response. Keep the branded hold screen visible.
     }
   }
 
@@ -2469,6 +2472,11 @@ export function App() {
                   <button className="jobLogsButton" onClick={() => void inspectJob(job.id, { openLogs: true })}>
                     Logs
                   </button>
+                  {["failed", "cancelled"].includes(job.status) ? (
+                    <button className="jobLogsButton" onClick={() => void restartJob(job.id)}>
+                      Restart
+                    </button>
+                  ) : null}
                   {["queued", "scanning", "copyingToProject", "hashingProject", "copyingToDestinations", "verifyingDestinations"].includes(
                     job.status
                   ) ? (

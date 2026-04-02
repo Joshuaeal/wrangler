@@ -268,6 +268,36 @@ export function cancelJob(jobId: string): void {
   addJobEvent(jobId, "cancelled", "Job cancelled by user.");
 }
 
+export function restartJob(jobId: string): void {
+  const job = getJobById(jobId);
+  if (!job) {
+    throw new Error(`Job not found: ${jobId}`);
+  }
+
+  // Restarting is only meaningful if we previously failed/cancelled.
+  if (job.status !== "failed" && job.status !== "cancelled") {
+    throw new Error(`Cannot restart job in status ${job.status}`);
+  }
+
+  const transaction = db.transaction(() => {
+    db.prepare("DELETE FROM job_events WHERE job_id = ?").run(jobId);
+    db.prepare("DELETE FROM copy_records WHERE job_id = ?").run(jobId);
+    db.prepare(`
+      UPDATE jobs
+      SET status = 'queued',
+        updated_at = ?,
+        started_at = NULL,
+        completed_at = NULL,
+        error = NULL,
+        summary = NULL
+      WHERE id = ?
+    `).run(now(), jobId);
+  });
+
+  transaction();
+  addJobEvent(jobId, "restarted", "Job restart requested.");
+}
+
 export function updateJobStatus(jobId: string, status: JobStatus, patch: { error?: string | null; summary?: string | null } = {}): void {
   const updatedAt = now();
   const current = getJobById(jobId);
