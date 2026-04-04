@@ -349,10 +349,6 @@ export function App() {
   const [sourcePreview, setSourcePreview] = useState<SourcePreview | null>(null);
   const [sourceMetadata, setSourceMetadata] = useState<SourceMetadata | null>(null);
   const [sourceMetadataLoading, setSourceMetadataLoading] = useState(false);
-  const [sourcePoolHoverPreview, setSourcePoolHoverPreview] = useState<{
-    volumeId: string;
-    sourcePath: string;
-  } | null>(null);
   const finderColumnsRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const autoFolderNamesRef = useRef<Record<string, string>>({});
 
@@ -1985,13 +1981,6 @@ export function App() {
                   key={sourceKey(source.volumeId, source.sourcePath)}
                   className={`sourcePoolItem ${draggedSourceKey === sourceKey(source.volumeId, source.sourcePath) ? "sourcePoolItemDragging" : ""}`}
                   draggable
-                  onMouseEnter={() => {
-                    if (!canPreviewPath(source.sourcePath)) {
-                      return;
-                    }
-                    setSourcePoolHoverPreview({ volumeId: source.volumeId, sourcePath: source.sourcePath });
-                  }}
-                  onMouseLeave={() => setSourcePoolHoverPreview(null)}
                   onDragStart={(event) => {
                     const payload = JSON.stringify({ volumeId: source.volumeId, sourcePath: source.sourcePath });
                     event.dataTransfer.setData("application/json", payload);
@@ -2000,57 +1989,57 @@ export function App() {
                   }}
                   onDragEnd={() => setDraggedSourceKey(null)}
                 >
-                  {sourcePoolHoverPreview &&
-                  sourcePoolHoverPreview.volumeId === source.volumeId &&
-                  sourcePoolHoverPreview.sourcePath === source.sourcePath ? (
-                    <div className="sourcePoolHoverThumb">
+                  <div className="sourcePoolItemMain">
+                    <strong>{source.sourcePath.split("/").pop() ?? source.sourcePath}</strong>
+                    <span>{source.volumeName}</span>
+                    <small>Source: {source.sourcePath}</small>
+                    <label className="targetPicker">
+                      <span>Target Folder</span>
+                      <select
+                        value={source.targetPath}
+                        onChange={(event) =>
+                          ingestMode === "auto"
+                            ? assignTargetToVolume(source.volumeId, event.target.value)
+                            : assignTargetToSource(source.volumeId, source.sourcePath, event.target.value)
+                        }
+                      >
+                        {projectDirectories.map((directory) => (
+                          <option key={`${sourceKey(source.volumeId, source.sourcePath)}:${directory}`} value={directory}>
+                            {directory === "." ? "Project Root" : directory}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="pickerActions">
+                      {ingestMode === "auto" ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            openRenameDialog({
+                              kind: "auto",
+                              volumeId: source.volumeId,
+                              currentPath: source.targetPath,
+                              currentName: source.targetPath.split("/").pop() ?? source.targetPath
+                            })
+                          }
+                        >
+                          Rename Folder
+                        </button>
+                      ) : null}
+                      <button className="dangerButton" onClick={() => removePooledSource(source.volumeId, source.sourcePath)}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                  {canPreviewPath(source.sourcePath) ? (
+                    <div className="sourcePoolThumb">
                       <img
-                        className="sourcePoolHoverThumbImg"
+                        className="sourcePoolThumbImg"
                         src={`${apiBase}/volumes/${source.volumeId}/thumbnail?path=${encodeURIComponent(source.sourcePath)}&size=240`}
                         alt={source.sourcePath}
                       />
                     </div>
                   ) : null}
-                  <strong>{source.sourcePath.split("/").pop() ?? source.sourcePath}</strong>
-                  <span>{source.volumeName}</span>
-                  <small>Source: {source.sourcePath}</small>
-                  <label className="targetPicker">
-                    <span>Target Folder</span>
-                    <select
-                      value={source.targetPath}
-                      onChange={(event) =>
-                        ingestMode === "auto"
-                          ? assignTargetToVolume(source.volumeId, event.target.value)
-                          : assignTargetToSource(source.volumeId, source.sourcePath, event.target.value)
-                      }
-                    >
-                      {projectDirectories.map((directory) => (
-                        <option key={`${sourceKey(source.volumeId, source.sourcePath)}:${directory}`} value={directory}>
-                          {directory === "." ? "Project Root" : directory}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className="pickerActions">
-                    {ingestMode === "auto" ? (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          openRenameDialog({
-                            kind: "auto",
-                            volumeId: source.volumeId,
-                            currentPath: source.targetPath,
-                            currentName: source.targetPath.split("/").pop() ?? source.targetPath
-                          })
-                        }
-                      >
-                        Rename Folder
-                      </button>
-                    ) : null}
-                    <button className="dangerButton" onClick={() => removePooledSource(source.volumeId, source.sourcePath)}>
-                      Remove
-                    </button>
-                  </div>
                 </div>
               ))
             ) : (
