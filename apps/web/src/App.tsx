@@ -972,7 +972,7 @@ export function App() {
     setMacDirectoryPath(macDirectoryHistory[nextIndex] ?? ".");
   }
 
-  function applyPickedDestination(selectedPath: string) {
+  async function applyPickedDestination(selectedPath: string) {
     if (!draftDestinations || !destinationPickerField) {
       return;
     }
@@ -981,9 +981,9 @@ export function App() {
       ...draftDestinations,
       [destinationPickerField]: selectedPath
     };
-    setDraftDestinations(nextDestinations);
     setShowDestinationPicker(false);
     setDestinationPickerField(null);
+    await persistDestinations(nextDestinations);
   }
 
   function folderLabelFromPath(p: string): string {
