@@ -25,20 +25,22 @@ export async function listVolumes(): Promise<Volume[]> {
   try {
     return await fetchJson<Volume[]>(`${config.hostHelperUrl}/volumes`);
   } catch {
-    const names = await fs.readdir(config.sourceRoot);
+    const entries = await fs.readdir(config.sourceRoot, { withFileTypes: true });
     const now = new Date().toISOString();
-    return names.map((name) => ({
-      id: name,
-      name,
-      mountPath: path.join(config.sourceRoot, name),
-      deviceIdentifier: null,
-      sizeBytes: null,
-      removable: true,
-      writable: false,
-      fileSystem: null,
-      insertedAt: now,
-      lastSeenAt: now
-    }));
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
+        id: entry.name,
+        name: entry.name,
+        mountPath: path.join(config.sourceRoot, entry.name),
+        deviceIdentifier: null,
+        sizeBytes: null,
+        removable: true,
+        writable: false,
+        fileSystem: null,
+        insertedAt: now,
+        lastSeenAt: now
+      }));
   }
 }
 
@@ -53,7 +55,15 @@ export async function getVolumeOrThrow(volumeId: string): Promise<Volume> {
 export async function listVolumeFiles(volume: Volume, relativePath = "."): Promise<FileEntry[]> {
   const root = assertInsideRoot(config.sourceRoot, volume.mountPath);
   const directory = assertInsideRoot(root, path.join(root, relativePath));
-  const entries = await fs.readdir(directory, { withFileTypes: true });
+  let entries;
+  try {
+    entries = await fs.readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (isIgnorableFsError(error)) {
+      return [];
+    }
+    throw error;
+  }
   const results = await Promise.all(entries.map(async (entry) => {
     if (shouldIgnoreEntry(entry.name)) {
       return null;
@@ -101,6 +111,7 @@ function isIgnorableFsError(error: unknown): boolean {
   return error instanceof Error && "code" in error && (
     error.code === "ENOENT" ||
     error.code === "EPERM" ||
-    error.code === "EACCES"
+    error.code === "EACCES" ||
+    error.code === "ENOTDIR"
   );
 }
