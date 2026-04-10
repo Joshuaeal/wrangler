@@ -23,7 +23,8 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 export async function listVolumes(): Promise<Volume[]> {
   try {
-    return await fetchJson<Volume[]>(`${config.hostHelperUrl}/volumes`);
+    const volumes = await fetchJson<Volume[]>(`${config.hostHelperUrl}/volumes`);
+    return await filterAccessibleVolumes(volumes);
   } catch {
     const entries = await fs.readdir(config.sourceRoot, { withFileTypes: true });
     const now = new Date().toISOString();
@@ -42,6 +43,20 @@ export async function listVolumes(): Promise<Volume[]> {
         lastSeenAt: now
       }));
   }
+}
+
+async function filterAccessibleVolumes(volumes: Volume[]): Promise<Volume[]> {
+  const results = await Promise.all(
+    volumes.map(async (volume) => {
+      try {
+        const stats = await fs.stat(volume.mountPath);
+        return stats.isDirectory() ? volume : null;
+      } catch {
+        return null;
+      }
+    })
+  );
+  return results.filter((volume): volume is Volume => volume !== null);
 }
 
 export async function getVolumeOrThrow(volumeId: string): Promise<Volume> {
